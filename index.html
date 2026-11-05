@@ -70,6 +70,18 @@ td.title .ch a { color: var(--muted); font-weight: 400; }
 .empty { text-align: center; color: var(--muted); padding: 30px; }
 details summary { cursor: pointer; color: var(--muted); font-size: 13px; }
 code { background: var(--row-hover); padding: 1px 4px; border-radius: 4px; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { border: 1px solid var(--border); background: var(--input); color: var(--text); border-radius: 999px; padding: 4px 11px; font: inherit; font-size: 13px; cursor: pointer; }
+.chip.on { background: var(--accent); border-color: var(--accent); color: var(--accent-text); font-weight: 600; }
+.chip small { opacity: .7; font-weight: 400; margin-left: 4px; }
+.profile { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; margin: 14px 0; }
+.profile img { width: 56px; height: 56px; border-radius: 50%; background: var(--border); }
+.profile .name { font-weight: 700; font-size: 16px; }
+.stats { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 13px; color: var(--muted); }
+.stats b { color: var(--text); }
+.niche-block { margin-top: 12px; }
+.niche-block h3 { font-size: 12px; color: var(--muted); font-weight: 600; margin: 0 0 6px; }
+.via { font-size: 11px; color: var(--muted); }
 </style>
 </head>
 <body>
@@ -95,11 +107,46 @@ code { background: var(--row-hover); padding: 1px 4px; border-radius: 4px; }
       <div class="seg" id="mode">
         <button type="button" data-mode="keyword" class="on">Keyword</button>
         <button type="button" data-mode="hashtag">Hashtag</button>
+        <button type="button" data-mode="niche">My niche</button>
       </div>
-      <label class="grow"><span id="qLabel">Search terms</span>
+      <label class="grow" id="qWrap"><span id="qLabel">Search terms</span>
         <input id="q" type="text" placeholder="e.g. home workout">
       </label>
+      <label class="grow" id="chWrap" style="display:none">Your channel (URL, @handle, channel ID, or one of your video links)
+        <input id="channelInput" type="text" placeholder="e.g. @yourchannel">
+      </label>
+      <button class="ghost" id="analyze" type="button" style="display:none">Analyze channel</button>
       <label class="inline" id="strictWrap" style="display:none"><input id="strict" type="checkbox" checked> Only videos that actually use the hashtag</label>
+    </div>
+
+    <div id="nichePanel" style="display:none; margin-bottom:14px">
+      <div class="hint" id="nicheEmpty">Analyzing a channel reads its last 50 uploads (about 3 quota units). It works out the channel's topics, hashtags and format mix, then searches those topics for outliers on <i>other</i> channels.</div>
+      <div id="nicheResult" style="display:none">
+        <div class="profile">
+          <img id="pAvatar" alt="">
+          <div>
+            <div class="name" id="pName"></div>
+            <div class="stats" id="pStats"></div>
+            <div class="stats" id="pCats" style="margin-top:4px"></div>
+          </div>
+        </div>
+        <div class="niche-block">
+          <h3>Topics found (click to toggle; each selected topic is one search)</h3>
+          <div class="chips" id="topicChips"></div>
+        </div>
+        <div class="niche-block">
+          <h3>Hashtags you use</h3>
+          <div class="chips" id="tagChips"></div>
+        </div>
+        <div class="row niche-block">
+          <label class="grow">Add your own topic or #hashtag
+            <input id="addTopic" type="text" placeholder="e.g. budget meal prep, or #mealprep">
+          </label>
+          <button class="ghost" id="addTopicBtn" type="button">Add</button>
+          <button class="ghost" id="applySuggest" type="button"></button>
+        </div>
+        <div class="hint" id="nicheCost"></div>
+      </div>
     </div>
 
     <div class="grid">
@@ -125,6 +172,12 @@ code { background: var(--row-hover); padding: 1px 4px; border-radius: 4px; }
           <option value="custom">Custom range…</option>
         </select>
       </label>
+      <label>Language
+        <select id="language">
+          <option value="">Any language</option>
+          <option value="en">English only</option>
+        </select>
+      </label>
       <label class="custom-date" style="display:none">From <input id="dateFrom" type="date"></label>
       <label class="custom-date" style="display:none">To <input id="dateTo" type="date"></label>
     </div>
@@ -139,16 +192,20 @@ code { background: var(--row-hover); padding: 1px 4px; border-radius: 4px; }
             <option value="date">Newest</option>
           </select>
         </label>
-        <label>Result pages (50 videos, 100 units each)
+        <label>Result pages per search (50 videos, 100 units each)
           <select id="pages">
             <option>1</option><option selected>2</option><option>3</option><option>4</option><option>5</option>
+          </select>
+        </label>
+        <label>Pages per topic in My niche mode
+          <select id="nichePages">
+            <option selected>1</option><option>2</option><option>3</option>
           </select>
         </label>
         <label>Baseline size (recent uploads per channel)
           <input id="baselineN" type="number" min="5" max="50" value="30">
         </label>
         <label>Region code (optional) <input id="region" type="text" maxlength="2" placeholder="US"></label>
-        <label>Language (optional) <input id="lang" type="text" maxlength="5" placeholder="en"></label>
       </div>
     </details>
 
@@ -191,6 +248,7 @@ code { background: var(--row-hover); padding: 1px 4px; border-radius: 4px; }
       <li>Shorts are compared with the channel's other Shorts, and long-form videos with its other long-form videos. If a channel has fewer than 5 uploads of that format, all of its uploads are used.</li>
       <li>A video counts as a Short if it runs 3 minutes or less, or has <code>#shorts</code> in its title or description.</li>
       <li>Hashtag mode searches for <code>#tag</code>. With the strict option on, it keeps only videos whose title, description or tags contain that hashtag. That's the closest the API gets to a YouTube hashtag page.</li>
+      <li><b>My niche</b> mode reads your last 50 uploads and ranks the words, phrases and hashtags in their titles, tags and descriptions. Phrases that show up across several videos rank higher, and videos that did well for you count more. Each topic you select is searched separately, and your own channel is left out of the results.</li>
       <li>Channel baselines are cached in this browser for 12 hours, so repeat searches cost less quota.</li>
     </ul>
   </details>
@@ -268,6 +326,39 @@ code { background: var(--row-hover); padding: 1px 4px; border-radius: 4px; }
     return (v.tags || []).some((t) => normTag(t) === tag);
   }
 
+  // ---------- language detection ----------
+  // Common words that show a title or description is in a Latin-script language other than English.
+  const NON_EN = new Set(('de la que el los las del por para una como pero más muy este esta todo hoy cómo qué ' +
+    'não você uma com seu sua isso muito também então ' +
+    'les des est une pour dans avec sur pas qui sont ce cette mais très ' +
+    'und der das ist nicht ein eine ich mit auf für dem sie wie ' +
+    'het een niet zijn ook voor ' +
+    'il di che non per gli della sono ' +
+    'yang dan ini itu dengan untuk tidak aku kamu ' +
+    've bir bu çok ile için ne ' +
+    'na nie się jest że jak ' +
+    'och att det är som för med på').split(/\s+/));
+  const EN = new Set(('the and you your this that with for are was what how why when is it my i to of in on at be have just ' +
+    'not can will all from they we our out about get more one so do if or who').split(/\s+/));
+
+  function latinRatio(s) {
+    const letters = s.match(/\p{L}/gu) || [];
+    if (!letters.length) return 1;
+    return letters.filter((ch) => /\p{Script=Latin}/u.test(ch)).length / letters.length;
+  }
+  function looksEnglish(v) {
+    // A mostly non-Latin title (Hindi, Arabic, Japanese, Cyrillic, etc.) is never treated as English.
+    if (latinRatio(v.title) < 0.6) return false;
+    // Trust the creator's language setting when it's there.
+    if (v.lang && v.lang !== 'zxx' && v.lang !== 'und') return v.lang === 'en' || v.lang.startsWith('en-');
+    // Otherwise compare common English words with common words from other languages.
+    const words = (v.title + ' ' + v.description.slice(0, 400)).toLowerCase().match(/\p{L}+/gu) || [];
+    let en = 0, other = 0;
+    for (const w of words) { if (EN.has(w)) en++; else if (NON_EN.has(w)) other++; }
+    if (latinRatio(v.description.slice(0, 400)) < 0.6 && v.description.trim()) return false;
+    return other === 0 || en > other;
+  }
+
   // ---------- data fetching ----------
   async function fetchVideos(ids) {
     const out = [];
@@ -285,6 +376,7 @@ code { background: var(--row-hover); padding: 1px 4px; border-radius: 4px; }
           publishedAt: Date.parse(it.snippet.publishedAt),
           thumb: it.snippet.thumbnails?.medium?.url || it.snippet.thumbnails?.default?.url || '',
           live: it.snippet.liveBroadcastContent && it.snippet.liveBroadcastContent !== 'none',
+          lang: (it.snippet.defaultAudioLanguage || it.snippet.defaultLanguage || '').toLowerCase(),
           views: it.statistics?.viewCount != null ? +it.statistics.viewCount : null,
           likes: it.statistics?.likeCount != null ? +it.statistics.likeCount : null,
           comments: it.statistics?.commentCount != null ? +it.statistics.commentCount : null,
@@ -359,17 +451,21 @@ code { background: var(--row-hover); padding: 1px 4px; border-radius: 4px; }
       minScore: num('minScore') ?? 0,
       after, before,
       strict: $('strict').checked,
+      language: $('language').value,
     };
   }
 
-  function passesPre(v, ch, f, tag) {
+  function passesPre(v, ch, f, excludeChannelId) {
     if (v.live || v.views == null) return false;
+    if (excludeChannelId && v.channelId === excludeChannelId) return false;
     if (v.views < f.minViews) return false;
     if (f.format === 'short' && !v.short) return false;
     if (f.format === 'long' && v.short) return false;
+    if (f.language === 'en' && !looksEnglish(v)) return false;
     if (f.after && v.publishedAt < f.after) return false;
     if (f.before && v.publishedAt > f.before) return false;
-    if (tag && f.strict && !hasHashtag(v, tag)) return false;
+    // A video found only through hashtag searches must actually carry one of those hashtags.
+    if (f.strict && v.via && !v.via.some((qq) => !qq.tag || hasHashtag(v, qq.tag))) return false;
     if (!ch) return false;
     if (f.minSubs > 0 || f.maxSubs != null) {
       if (ch.subs == null) return false;
@@ -388,13 +484,24 @@ code { background: var(--row-hover); padding: 1px 4px; border-radius: 4px; }
     if (!apiKey) return showError('Enter a YouTube Data API key first.');
     if ($('saveKey').checked) store.set('ob:key', apiKey); else store.del('ob:key');
 
-    const raw = $('q').value.trim();
-    const tag = mode === 'hashtag' ? normTag(raw) : null;
-    if (!raw || (mode === 'hashtag' && !tag)) return showError(mode === 'hashtag' ? 'Enter a hashtag.' : 'Enter search terms.');
-    const q = tag ? '#' + tag : raw;
+    let queries, label, excludeChannelId = null;
+    if (mode === 'niche') {
+      if (!niche) return showError('Analyze your channel first.');
+      queries = niche.topics.concat(niche.hashtags).filter((t) => t.on).map(toQuery);
+      if (!queries.length) return showError('Select at least one topic or hashtag to search.');
+      label = `your niche (${queries.length} topic${queries.length === 1 ? '' : 's'})`;
+      excludeChannelId = niche.channel.id;
+    } else {
+      const raw = $('q').value.trim();
+      const tag = mode === 'hashtag' ? normTag(raw) : null;
+      if (!raw || (mode === 'hashtag' && !tag)) return showError(mode === 'hashtag' ? 'Enter a hashtag.' : 'Enter search terms.');
+      queries = [tag ? { q: '#' + tag, label: '#' + tag, tag } : { q: raw, label: raw, tag: null }];
+      label = queries[0].q;
+    }
 
     const f = readFilters();
-    const pages = Number($('pages').value);
+    if (mode !== 'hashtag' && mode !== 'niche') f.strict = false;
+    const pages = Number(mode === 'niche' ? $('nichePages').value : $('pages').value);
     const n = Math.max(5, Math.min(50, Number($('baselineN').value) || 30));
     const btn = $('go');
     btn.disabled = true;
@@ -402,28 +509,36 @@ code { background: var(--row-hover); padding: 1px 4px; border-radius: 4px; }
 
     try {
       // 1. search
-      const ids = new Set();
-      let token;
-      for (let p = 0; p < pages; p++) {
-        setStatus(`Searching YouTube (page ${p + 1}/${pages})…`);
-        const data = await yt('search', {
-          part: 'id', type: 'video', q, maxResults: 50, order: $('order').value,
-          publishedAfter: f.after ? new Date(f.after).toISOString() : undefined,
-          publishedBefore: f.before ? new Date(f.before).toISOString() : undefined,
-          videoDuration: f.format === 'short' ? 'short' : undefined,
-          regionCode: $('region').value.trim().toUpperCase() || undefined,
-          relevanceLanguage: $('lang').value.trim() || undefined,
-          pageToken: token,
-        }, 100);
-        for (const it of data.items || []) if (it.id?.videoId) ids.add(it.id.videoId);
-        token = data.nextPageToken;
-        if (!token) break;
+      const via = new Map(); // videoId -> [query, ...]
+      for (const [qi, query] of queries.entries()) {
+        let token;
+        for (let p = 0; p < pages; p++) {
+          setStatus(`Searching “${query.label}”${queries.length > 1 ? ` (${qi + 1}/${queries.length})` : ''}, page ${p + 1}/${pages}…`);
+          const data = await yt('search', {
+            part: 'id', type: 'video', q: query.q, maxResults: 50, order: $('order').value,
+            publishedAfter: f.after ? new Date(f.after).toISOString() : undefined,
+            publishedBefore: f.before ? new Date(f.before).toISOString() : undefined,
+            videoDuration: f.format === 'short' ? 'short' : undefined,
+            regionCode: $('region').value.trim().toUpperCase() || undefined,
+            relevanceLanguage: f.language || undefined,
+            pageToken: token,
+          }, 100);
+          for (const it of data.items || []) {
+            const id = it.id?.videoId;
+            if (!id) continue;
+            if (!via.has(id)) via.set(id, []);
+            if (!via.get(id).includes(query)) via.get(id).push(query);
+          }
+          token = data.nextPageToken;
+          if (!token) break;
+        }
       }
-      if (!ids.size) { rows = []; lastMeta = { found: 0, q }; render(); setStatus('No videos found.'); return; }
+      if (!via.size) { rows = []; lastMeta = { found: 0, q: label }; render(); setStatus('No videos found.'); return; }
 
       // 2. video details
-      setStatus(`Loading stats for ${ids.size} videos…`);
-      const videos = await fetchVideos([...ids]);
+      setStatus(`Loading stats for ${via.size} videos…`);
+      const videos = await fetchVideos([...via.keys()]);
+      for (const v of videos) v.via = via.get(v.id) || [];
 
       // 3. channel details
       const chIds = [...new Set(videos.map((v) => v.channelId))];
@@ -431,7 +546,7 @@ code { background: var(--row-hover); padding: 1px 4px; border-radius: 4px; }
       const channels = await fetchChannels(chIds);
 
       // 4. pre-filter so we only pay for baselines we need
-      const candidates = videos.filter((v) => passesPre(v, channels.get(v.channelId), f, tag));
+      const candidates = videos.filter((v) => passesPre(v, channels.get(v.channelId), f, excludeChannelId));
       const needCh = [...new Set(candidates.map((v) => v.channelId))];
 
       // 5. channel baselines
@@ -461,7 +576,7 @@ code { background: var(--row-hover); padding: 1px 4px; border-radius: 4px; }
           viewsPerDay: v.views / ageDays,
         };
       });
-      lastMeta = { found: videos.length, q, tag, minScore: f.minScore };
+      lastMeta = { found: videos.length, q: label, multi: queries.length > 1 };
       render();
       setStatus(`Done. This search used about ${(getQuota() - startQuota).toLocaleString()} quota units.`);
     } catch (e) {
@@ -517,6 +632,7 @@ code { background: var(--row-hover); padding: 1px 4px; border-radius: 4px; }
           <a href="https://www.youtube.com/${r.short ? 'shorts/' : 'watch?v='}${esc(r.id)}" target="_blank" rel="noopener">${esc(r.title)}</a>
           <span class="badge">${r.short ? 'Short' : 'Long'} · ${fmtDuration(r.seconds)}</span>
           <div class="ch"><a href="https://www.youtube.com/channel/${esc(r.channelId)}" target="_blank" rel="noopener">${esc(r.channelTitle)}</a></div>
+          ${m.multi ? `<div class="via">found via ${r.via.map((x) => esc(x.label)).join(', ')}</div>` : ''}
         </td>
         <td class="num">${scoreBadge(r.score)}</td>
         <td class="num">${compact(r.views)}</td>
@@ -530,12 +646,13 @@ code { background: var(--row-hover); padding: 1px 4px; border-radius: 4px; }
 
   function exportCsv() {
     const list = visibleRows();
-    const cols = ['title', 'url', 'format', 'durationSec', 'channel', 'channelUrl', 'outlierScore', 'views', 'channelMedian', 'baselineVideos', 'subs', 'viewsPerSub', 'viewsPerDay', 'publishedAt', 'likes', 'comments'];
+    const cols = ['title', 'url', 'format', 'durationSec', 'channel', 'channelUrl', 'outlierScore', 'views', 'channelMedian', 'baselineVideos', 'subs', 'viewsPerSub', 'viewsPerDay', 'publishedAt', 'likes', 'comments', 'foundVia'];
     const cell = (v) => { const s = v == null ? '' : String(v); return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
     const lines = [cols.join(',')].concat(list.map((r) => [
       r.title, `https://www.youtube.com/${r.short ? 'shorts/' : 'watch?v='}${r.id}`, r.short ? 'short' : 'long', r.seconds,
       r.channelTitle, `https://www.youtube.com/channel/${r.channelId}`, r.score?.toFixed(2), r.views, r.median, r.baselineCount,
       r.subs, r.viewsPerSub?.toFixed(2), Math.round(r.viewsPerDay), new Date(r.publishedAt).toISOString(), r.likes, r.comments,
+      (r.via || []).map((x) => x.label).join(' | '),
     ].map(cell).join(',')));
     const blob = new Blob([lines.join('\n')], { type: 'text/csv' });
     const a = document.createElement('a');
@@ -545,16 +662,223 @@ code { background: var(--row-hover); padding: 1px 4px; border-radius: 4px; }
     setTimeout(() => URL.revokeObjectURL(a.href), 1000);
   }
 
+  // ---------- My niche: channel analysis ----------
+  const STOP = new Set(('a about above after again against all am an and any are as at be because been before being below between both but by can could did do does doing down during each few for from further had has have having he her here hers herself him himself his how i if in into is it its itself just me more most my myself no nor not now of off on once only or other our ours out over own same she should so some such than that the their theirs them then there these they this those through to too under until up very was we were what when where which while who whom why will with would you your yours yourself ' +
+    "i'm it's don't can't won't you're that's what's here's let's we're they're isn't didn't doesn't ive im dont cant wont youre thats whats " +
+    'video videos shorts short youtube channel subscribe official new best top vs part ep episode full live today day days week year years ' +
+    'first last ever every get got make made one two three way ways thing things really much many like want need see watch try tried trying ' +
+    'go going know time times good great amazing insane crazy actually also back still even www com http https link links follow instagram tiktok ' +
+    'twitter facebook discord patreon merch music song free check use using us via feat ft pt w n ideas tips guide beginners life changed under month').split(/\s+/));
+  const GENERIC_TAGS = new Set(['shorts', 'short', 'youtubeshorts', 'shortsfeed', 'ytshorts', 'youtube', 'viral', 'trending', 'fyp', 'foryou', 'foryoupage', 'subscribe', 'explore', 'explorepage', 'shortvideo', 'shortsvideo', 'trend', 'reels', 'tiktok', 'video']);
+
+  let niche = null; // { channel, topics:[{text,score,on}], hashtags:[{text,score,on}], suggest }
+  const toQuery = (t) => t.text.startsWith('#') ? { q: t.text, label: t.text, tag: normTag(t.text) } : { q: t.text, label: t.text, tag: null };
+
+  function tokenize(s) {
+    return (s.toLowerCase().replace(/https?:\/\/\S+/g, ' ').match(/[\p{L}\p{N}][\p{L}\p{N}'’]*/gu) || [])
+      .map((w) => w.replace(/[’']s$/, '').replace(/[’']/g, "'"));
+  }
+  const goodWord = (w) => w.length >= 2 && !STOP.has(w) && !/^\d+$/.test(w);
+
+  async function resolveChannelId(input) {
+    const s = input.trim();
+    let m;
+    if ((m = /(UC[\w-]{22})/.exec(s))) return m[1];
+    if ((m = /(?:youtu\.be\/|[?&]v=|\/shorts\/|\/live\/)([\w-]{11})/.exec(s))) {
+      const d = await yt('videos', { part: 'snippet', id: m[1] }, 1);
+      if (d.items?.[0]) return d.items[0].snippet.channelId;
+    }
+    if ((m = /youtube\.com\/user\/([^/?#]+)/i.exec(s))) {
+      const d = await yt('channels', { part: 'id', forUsername: m[1] }, 1);
+      if (d.items?.[0]) return d.items[0].id;
+    }
+    const handle = (m = /@([^/?#\s]+)/.exec(s)) ? m[1] : (m = /youtube\.com\/c\/([^/?#]+)/i.exec(s)) ? m[1] : /^[\w.\-]+$/.test(s) ? s : null;
+    if (handle) {
+      const d = await yt('channels', { part: 'id', forHandle: '@' + handle }, 1);
+      if (d.items?.[0]) return d.items[0].id;
+    }
+    setStatus('Looking the channel up by name (costs 100 units)…');
+    const d = await yt('search', { part: 'snippet', type: 'channel', q: s.replace(/^.*youtube\.com\/(c\/)?/i, ''), maxResults: 1 }, 100);
+    if (d.items?.[0]) return d.items[0].snippet.channelId;
+    throw new Error('Could not find that channel. Try the @handle or the channel URL.');
+  }
+
+  function extractNiche(videos, channelTitle, brandKeywords) {
+    const viewsList = videos.map((v) => v.views ?? 0);
+    const med = median(viewsList) || 1;
+    const nameWords = new Set(tokenize(channelTitle));
+    const terms = new Map(); // text -> {score, df, words}
+    const tags = new Map();
+    const bump = (map, key, w, words) => {
+      const e = map.get(key) || { score: 0, df: 0, words };
+      e.score += w; e.df += 1; map.set(key, e);
+    };
+    for (const v of videos) {
+      // Videos that did well for this channel say more about what works in its niche.
+      const w = 0.5 + Math.min((v.views ?? 0) / med, 4) / 2;
+      const seen = new Set();
+      const add = (key, words) => { if (!seen.has(key)) { seen.add(key); bump(terms, key, w, words); } };
+      const titleWords = tokenize(v.title.replace(/#[\p{L}\p{N}_]+/gu, ' '));
+      for (let i = 0; i < titleWords.length; i++) {
+        const a = titleWords[i];
+        if (goodWord(a) && !nameWords.has(a)) add(a, 1);
+        const b = titleWords[i + 1];
+        if (b && goodWord(a) && goodWord(b) && !(nameWords.has(a) && nameWords.has(b))) add(a + ' ' + b, 2);
+        const c = titleWords[i + 2];
+        if (b && c && goodWord(a) && goodWord(c) && (goodWord(b) || ['and', 'of', 'for', 'on'].includes(b))) add(`${a} ${b} ${c}`, 3);
+      }
+      for (const t of v.tags || []) {
+        const tw = tokenize(t).filter(goodWord);
+        if (!tw.length || tw.length > 4 || tw.every((x) => nameWords.has(x))) continue;
+        add(tw.join(' '), tw.length);
+        if (tw.length > 1) for (const x of tw) if (!nameWords.has(x)) add(x, 1);
+      }
+      const hseen = new Set();
+      for (const h of (v.title + ' ' + v.description).match(/#[\p{L}\p{N}_]+/gu) || []) {
+        const k = normTag(h);
+        if (k.length < 2 || GENERIC_TAGS.has(k) || hseen.has(k) || /^\d+$/.test(k)) continue;
+        hseen.add(k); bump(tags, k, w, 1);
+      }
+    }
+    for (const k of (brandKeywords.match(/"[^"]+"|\S+/g) || []).map((x) => tokenize(x.replace(/"/g, '')).filter(goodWord).join(' ')).filter(Boolean)) {
+      const e = terms.get(k); if (e) e.score += 1;
+    }
+    const minDf = videos.length >= 10 ? 2 : 1;
+    const ranked = [...terms.entries()].filter(([, e]) => e.df >= minDf)
+      .map(([text, e]) => ({ text, score: e.score * (1 + 0.6 * (e.words - 1)), df: e.df, words: e.words }))
+      .sort((a, b) => b.score - a.score);
+    const picked = [];
+    for (const c of ranked) {
+      if (picked.length >= 12) break;
+      const cw = c.text.split(' ');
+      // Skip a word already covered by a chosen phrase, or a phrase that only repeats chosen words.
+      if (picked.some((p) => { const pw = p.text.split(' '); return cw.every((x) => pw.includes(x)) || (c.words > 1 && pw.length === 1 && cw.includes(pw[0]) && p.score > c.score * 2.5); })) continue;
+      picked.push(c);
+    }
+    const hashtags = [...tags.entries()].filter(([, e]) => e.df >= minDf).sort((a, b) => b[1].score - a[1].score).slice(0, 8)
+      .map(([k, e]) => ({ text: '#' + k, score: e.score, df: e.df, on: false }));
+    picked.forEach((t, i) => (t.on = i < 4));
+    return { topics: picked, hashtags };
+  }
+
+  async function analyzeChannel() {
+    showError('');
+    apiKey = $('apiKey').value.trim();
+    if (!apiKey) return showError('Enter a YouTube Data API key first.');
+    const input = $('channelInput').value.trim();
+    if (!input) return showError('Enter your channel URL or @handle.');
+    store.set('ob:channelInput', input);
+    $('analyze').disabled = true;
+    try {
+      setStatus('Finding channel…');
+      const id = await resolveChannelId(input);
+      const cd = await yt('channels', { part: 'snippet,statistics,contentDetails,brandingSettings,topicDetails', id }, 1);
+      const c = cd.items?.[0];
+      if (!c) throw new Error('Channel not found.');
+      setStatus('Reading your recent uploads…');
+      const pl = await yt('playlistItems', { part: 'contentDetails', playlistId: c.contentDetails.relatedPlaylists.uploads, maxResults: 50 }, 1);
+      const ids = (pl.items || []).map((i) => i.contentDetails.videoId).filter(Boolean);
+      const videos = (await fetchVideos(ids)).filter((v) => !v.live);
+      if (!videos.length) throw new Error('This channel has no public uploads to analyze.');
+
+      const subs = c.statistics.hiddenSubscriberCount ? null : +c.statistics.subscriberCount;
+      const shorts = videos.filter((v) => v.short), longs = videos.filter((v) => !v.short);
+      const span = Math.max((Math.max(...videos.map((v) => v.publishedAt)) - Math.min(...videos.map((v) => v.publishedAt))) / 86400000, 1);
+      const shortPct = shorts.length / videos.length;
+      const ex = extractNiche(videos, c.snippet.title, c.brandingSettings?.channel?.keywords || '');
+      niche = {
+        channel: { id: c.id, title: c.snippet.title, subs },
+        ...ex,
+        suggest: {
+          format: shortPct >= 0.7 ? 'short' : shortPct <= 0.3 ? 'long' : 'all',
+          minSubs: subs ? Math.max(0, Math.round(subs / 10)) : null,
+          maxSubs: subs ? Math.round(subs * 10) : null,
+        },
+      };
+
+      $('pAvatar').src = c.snippet.thumbnails?.default?.url || '';
+      $('pName').textContent = c.snippet.title;
+      const stat = (k, v) => `<span>${k} <b>${v}</b></span>`;
+      $('pStats').innerHTML = [
+        stat('Subscribers', subs == null ? 'hidden' : compact(subs)),
+        stat('Uploads analyzed', videos.length),
+        stat('Shorts', Math.round(shortPct * 100) + '%'),
+        longs.length ? stat('Median long-form views', compact(median(longs.map((v) => v.views ?? 0)))) : '',
+        shorts.length ? stat('Median Shorts views', compact(median(shorts.map((v) => v.views ?? 0)))) : '',
+        stat('Uploads / week', (videos.length / (span / 7)).toFixed(1)),
+      ].join('');
+      const cats = (c.topicDetails?.topicCategories || []).map((u) => decodeURIComponent(u.split('/').pop()).replace(/_/g, ' '));
+      $('pCats').innerHTML = cats.length ? stat('YouTube categories', esc(cats.join(', '))) : '';
+      renderNiche();
+      $('nicheEmpty').style.display = 'none';
+      $('nicheResult').style.display = '';
+      setStatus('Channel analyzed. Pick topics, then click Find outliers.');
+    } catch (e) {
+      showError(e.message || String(e));
+      setStatus('Stopped.');
+    } finally {
+      $('analyze').disabled = false;
+    }
+  }
+
+  function renderNiche() {
+    if (!niche) return;
+    const chip = (t, i, kind) => `<button type="button" class="chip${t.on ? ' on' : ''}" data-kind="${kind}" data-i="${i}" title="Used in ${t.df ?? '?'} of your uploads">${esc(t.text)}${t.df ? `<small>${t.df}</small>` : ''}</button>`;
+    $('topicChips').innerHTML = niche.topics.map((t, i) => chip(t, i, 'topics')).join('') || '<span class="status">No recurring topics found. Add your own below.</span>';
+    $('tagChips').innerHTML = niche.hashtags.map((t, i) => chip(t, i, 'hashtags')).join('') || '<span class="status">No recurring hashtags.</span>';
+    const s = niche.suggest;
+    const fmt = { short: 'Shorts', long: 'long-form', all: 'Shorts + long-form' }[s.format];
+    $('applySuggest').textContent = s.minSubs != null ? `Match my channel: ${fmt}, ${compact(s.minSubs)}–${compact(s.maxSubs)} subs` : `Match my format: ${fmt}`;
+    updateNicheCost();
+  }
+  function updateNicheCost() {
+    if (!niche) return;
+    const n = niche.topics.concat(niche.hashtags).filter((t) => t.on).length;
+    const p = Number($('nichePages').value);
+    $('nicheCost').textContent = `${n} search${n === 1 ? '' : 'es'} selected × ${p} page${p === 1 ? '' : 's'} ≈ ${(n * p * 100).toLocaleString()} units for search, plus about 2 per channel checked.`;
+  }
+
   // ---------- wiring ----------
-  $('mode').addEventListener('click', (e) => {
-    const b = e.target.closest('button[data-mode]');
-    if (!b) return;
-    mode = b.dataset.mode;
-    document.querySelectorAll('#mode button').forEach((x) => x.classList.toggle('on', x === b));
+  function setMode(m) {
+    mode = m;
+    document.querySelectorAll('#mode button').forEach((x) => x.classList.toggle('on', x.dataset.mode === m));
     $('qLabel').textContent = mode === 'hashtag' ? 'Hashtag' : 'Search terms';
     $('q').placeholder = mode === 'hashtag' ? 'e.g. #fitness' : 'e.g. home workout';
-    $('strictWrap').style.display = mode === 'hashtag' ? '' : 'none';
+    $('qWrap').style.display = mode === 'niche' ? 'none' : '';
+    $('chWrap').style.display = $('analyze').style.display = $('nichePanel').style.display = mode === 'niche' ? '' : 'none';
+    $('strictWrap').style.display = mode === 'keyword' ? 'none' : '';
+    store.set('ob:mode', m);
+  }
+  $('mode').addEventListener('click', (e) => {
+    const b = e.target.closest('button[data-mode]');
+    if (b) setMode(b.dataset.mode);
   });
+  $('analyze').addEventListener('click', analyzeChannel);
+  $('channelInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') analyzeChannel(); });
+  $('nichePanel').addEventListener('click', (e) => {
+    const c = e.target.closest('.chip');
+    if (!c || !niche) return;
+    const t = niche[c.dataset.kind][+c.dataset.i];
+    t.on = !t.on;
+    renderNiche();
+  });
+  const addTopic = () => {
+    const v = $('addTopic').value.trim();
+    if (!v || !niche) return;
+    if (v.startsWith('#')) { const k = normTag(v); if (k) niche.hashtags.push({ text: '#' + k, on: true }); }
+    else niche.topics.push({ text: v.toLowerCase(), on: true });
+    $('addTopic').value = '';
+    renderNiche();
+  };
+  $('addTopicBtn').addEventListener('click', addTopic);
+  $('addTopic').addEventListener('keydown', (e) => { if (e.key === 'Enter') addTopic(); });
+  $('applySuggest').addEventListener('click', () => {
+    if (!niche) return;
+    const s = niche.suggest;
+    $('format').value = s.format;
+    if (s.minSubs != null) { $('minSubs').value = s.minSubs; $('maxSubs').value = s.maxSubs; }
+  });
+  $('nichePages').addEventListener('change', updateNicheCost);
   $('dateRange').addEventListener('change', () => {
     const show = $('dateRange').value === 'custom';
     document.querySelectorAll('.custom-date').forEach((el) => (el.style.display = show ? '' : 'none'));
@@ -571,10 +895,13 @@ code { background: var(--row-hover); padding: 1px 4px; border-radius: 4px; }
 
   const savedKey = store.get('ob:key');
   if (savedKey) { $('apiKey').value = savedKey; $('saveKey').checked = true; }
+  const savedCh = store.get('ob:channelInput');
+  if (savedCh) $('channelInput').value = savedCh;
+  setMode(store.get('ob:mode') || 'keyword');
   showQuota();
 
   // exposed for tests
-  window.__outlier = { parseDuration, isShort, median, scoreVideo, hasHashtag, normTag };
+  window.__outlier = { parseDuration, isShort, median, scoreVideo, hasHashtag, normTag, looksEnglish, extractNiche };
 })();
 </script>
 </body>

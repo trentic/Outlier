@@ -7,7 +7,9 @@ A single-file web tool (`index.html`) that searches YouTube for **outlier videos
 1. Get a free API key: Google Cloud Console → APIs & Services → enable **YouTube Data API v3** → Credentials → Create API key.
    (Optional but recommended: restrict the key to the YouTube Data API v3 only.)
 2. Open `index.html` in a browser (double-click it, or host it on GitHub Pages).
-3. Paste your key, choose **Keyword** or **Hashtag** mode, set your filters and click **Find outliers**.
+3. Paste your key, choose **Keyword**, **Hashtag** or **My niche** mode, set your filters and click **Find outliers**.
+
+Live version: https://trentic.github.io/Outlier/
 
 ## Filters
 
@@ -17,6 +19,7 @@ A single-file web tool (`index.html`) that searches YouTube for **outlier videos
 | Min views | Hide videos below this view count |
 | Min / max subscribers | Limit results to a channel-size range (channels that hide their sub count are excluded when either is set) |
 | Min outlier score | Only show videos at or above this multiple of the channel's median (updates live) |
+| Language | **English only** keeps videos whose language setting is English. For videos with no setting, it checks the title and description (non-Latin script, or common Spanish/Portuguese/French/German/etc. words, means it's dropped). It also tells YouTube's search to prefer English. |
 | Uploaded | Any time, 24h, 7d, 30d, 90d, 1y, or a custom date range |
 | Advanced | Search order, number of result pages (50 videos each), baseline size, region, language |
 
@@ -30,6 +33,16 @@ outlier score = video views ÷ median views of the channel's last N uploads
 - Shorts are compared with the channel's Shorts, and long-form videos with its long-form videos. If a channel has fewer than 5 uploads of that format, all of its uploads are used.
 - A video counts as a Short if it runs 3 minutes or less, or has `#shorts` in its title or description.
 - The table also shows views/sub and views/day so you can sort by them.
+
+## My niche mode
+
+Enter your channel (`@handle`, channel URL, channel ID, or a link to one of your videos) and click **Analyze channel**. This costs about 3 quota units. The tool reads your last 50 uploads and shows:
+
+- your subscriber count, Shorts vs long-form mix, median views and upload rate
+- the **topics** you make content about: 1–3 word phrases from your titles and tags that appear in several videos, with videos that did well for you counting more
+- the **hashtags** you use, leaving out generic ones like `#shorts` and `#viral`
+
+The top 4 topics start selected. Click chips to turn them on or off, or add your own. Each selected topic is a separate search, about 100 units per page. **Match my channel** sets the format to your main format and the subscriber range to your sub count ÷10 to ×10, so you see outliers from channels near your size. Your own videos are left out of the results, and each result shows which topic found it.
 
 ## Hashtag mode
 
