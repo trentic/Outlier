@@ -1,0 +1,50 @@
+# Outlier Finder
+
+A single-file web tool (`index.html`) that searches YouTube for **outlier videos and Shorts**: uploads that got far more views than their channel usually gets.
+
+## Use it
+
+1. Get a free API key: Google Cloud Console → APIs & Services → enable **YouTube Data API v3** → Credentials → Create API key.
+   (Optional but recommended: restrict the key to the YouTube Data API v3 only.)
+2. Open `index.html` in a browser (double-click it, or host it on GitHub Pages).
+3. Paste your key, choose **Keyword** or **Hashtag** mode, set your filters and click **Find outliers**.
+
+## Filters
+
+| Filter | What it does |
+|---|---|
+| Format | Shorts + long-form, Shorts only, or long-form only |
+| Min views | Hide videos below this view count |
+| Min / max subscribers | Limit results to a channel-size range (channels that hide their sub count are excluded when either is set) |
+| Min outlier score | Only show videos at or above this multiple of the channel's median (updates live) |
+| Uploaded | Any time, 24h, 7d, 30d, 90d, 1y, or a custom date range |
+| Advanced | Search order, number of result pages (50 videos each), baseline size, region, language |
+
+## The outlier formula
+
+```
+outlier score = video views ÷ median views of the channel's last N uploads
+```
+
+- The baseline leaves out the video being scored and any upload younger than 48 hours.
+- Shorts are compared with the channel's Shorts, and long-form videos with its long-form videos. If a channel has fewer than 5 uploads of that format, all of its uploads are used.
+- A video counts as a Short if it runs 3 minutes or less, or has `#shorts` in its title or description.
+- The table also shows views/sub and views/day so you can sort by them.
+
+## Hashtag mode
+
+The YouTube API has no endpoint for hashtag pages, so the tool searches for `#tag`. With **"Only videos that actually use the hashtag"** turned on, it keeps only videos whose title, description or tags contain exactly that hashtag (`#fitness` won't match `#fitnessgear`).
+
+## Quota
+
+The free daily quota is 10,000 units and resets at midnight Pacific time.
+
+- Each search page costs 100 units.
+- Video and channel lookups cost about 1 unit per 50 videos or channels.
+- Each channel baseline costs about 2 units. Baselines are cached in your browser for 12 hours.
+
+A typical 2-page search costs about 210–300 units, so you get roughly 30–45 searches a day. The page shows a running estimate of the quota you've used.
+
+## Privacy
+
+Your API key is only stored if you tick "Remember in this browser", and then only in that browser's localStorage. Requests go directly from your browser to `googleapis.com`.

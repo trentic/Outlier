@@ -1,0 +1,581 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Outlier Finder</title>
+<style>
+:root {
+  --bg: #f6f7f9; --panel: #ffffff; --text: #16181d; --muted: #5f6672; --border: #dfe2e7;
+  --accent: #d93025; --accent-text: #ffffff; --input: #ffffff; --row-hover: #f1f3f6;
+  --good: #137333; --good-bg: #e6f4ea; --warn: #b06000; --warn-bg: #fef7e0; --hot: #a50e0e; --hot-bg: #fce8e6;
+  --err-bg: #fce8e6; --err: #a50e0e;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f1115; --panel: #181b21; --text: #e8eaed; --muted: #9aa0a6; --border: #2c313a;
+    --accent: #ff5a4e; --accent-text: #111; --input: #111318; --row-hover: #20242c;
+    --good: #81c995; --good-bg: #0f2a19; --warn: #fdd663; --warn-bg: #2d2610; --hot: #f28b82; --hot-bg: #3a1513;
+    --err-bg: #3a1513; --err: #f28b82;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0f1115; --panel: #181b21; --text: #e8eaed; --muted: #9aa0a6; --border: #2c313a;
+  --accent: #ff5a4e; --accent-text: #111; --input: #111318; --row-hover: #20242c;
+  --good: #81c995; --good-bg: #0f2a19; --warn: #fdd663; --warn-bg: #2d2610; --hot: #f28b82; --hot-bg: #3a1513;
+  --err-bg: #3a1513; --err: #f28b82;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+main { max-width: 1280px; margin: 0 auto; padding: 20px 16px 60px; }
+h1 { font-size: 22px; margin: 0 0 4px; }
+.sub { color: var(--muted); margin: 0 0 18px; }
+.panel { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 16px; margin-bottom: 14px; }
+.panel h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin: 0 0 12px; }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 12px; }
+label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); }
+label.inline { flex-direction: row; align-items: center; gap: 6px; color: var(--text); font-size: 13px; }
+input, select { font: inherit; color: var(--text); background: var(--input); border: 1px solid var(--border); border-radius: 6px; padding: 7px 9px; min-width: 0; }
+input:focus, select:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+.row { display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-end; }
+.row > .grow { flex: 1 1 260px; }
+.seg { display: inline-flex; border: 1px solid var(--border); border-radius: 7px; overflow: hidden; }
+.seg button { border: 0; background: var(--input); color: var(--text); padding: 8px 14px; font: inherit; cursor: pointer; }
+.seg button.on { background: var(--accent); color: var(--accent-text); font-weight: 600; }
+button.primary { background: var(--accent); color: var(--accent-text); border: 0; border-radius: 7px; padding: 9px 20px; font: inherit; font-weight: 600; cursor: pointer; }
+button.primary:disabled { opacity: .55; cursor: progress; }
+button.ghost { background: transparent; color: var(--text); border: 1px solid var(--border); border-radius: 7px; padding: 7px 12px; font: inherit; cursor: pointer; }
+.hint { font-size: 12px; color: var(--muted); margin-top: 8px; }
+.status { font-size: 13px; color: var(--muted); }
+.error { background: var(--err-bg); color: var(--err); border-radius: 8px; padding: 10px 12px; margin-bottom: 14px; display: none; }
+.toolbar { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
+.tablewrap { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; min-width: 960px; }
+th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+th { font-size: 12px; color: var(--muted); font-weight: 600; cursor: pointer; user-select: none; white-space: nowrap; }
+th.num, td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+th[data-sort].active::after { content: " ▼"; }
+th[data-sort].active.asc::after { content: " ▲"; }
+tbody tr:hover { background: var(--row-hover); }
+td.thumb img { width: 120px; aspect-ratio: 16/9; object-fit: cover; border-radius: 6px; display: block; background: var(--border); }
+td.title a { color: var(--text); font-weight: 600; text-decoration: none; }
+td.title a:hover { text-decoration: underline; }
+td.title .ch { color: var(--muted); font-size: 12px; }
+td.title .ch a { color: var(--muted); font-weight: 400; }
+.badge { display: inline-block; font-size: 11px; padding: 1px 6px; border-radius: 4px; border: 1px solid var(--border); color: var(--muted); margin-left: 4px; }
+.score { display: inline-block; padding: 2px 8px; border-radius: 5px; font-weight: 700; }
+.s1 { background: var(--good-bg); color: var(--good); }
+.s2 { background: var(--warn-bg); color: var(--warn); }
+.s3 { background: var(--hot-bg); color: var(--hot); }
+.empty { text-align: center; color: var(--muted); padding: 30px; }
+details summary { cursor: pointer; color: var(--muted); font-size: 13px; }
+code { background: var(--row-hover); padding: 1px 4px; border-radius: 4px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Outlier Finder</h1>
+  <p class="sub">Find YouTube videos and Shorts that got far more views than their channel normally gets.</p>
+
+  <div class="panel">
+    <h2>API key</h2>
+    <div class="row">
+      <label class="grow">YouTube Data API v3 key
+        <input id="apiKey" type="password" placeholder="AIza…" autocomplete="off">
+      </label>
+      <label class="inline"><input id="saveKey" type="checkbox"> Remember in this browser</label>
+      <span class="status" id="quota"></span>
+    </div>
+    <div class="hint">Get a free key from Google Cloud Console → APIs &amp; Services → enable “YouTube Data API v3” → Credentials. The daily quota is 10,000 units and resets at midnight Pacific time.</div>
+  </div>
+
+  <div class="panel">
+    <h2>Search</h2>
+    <div class="row" style="margin-bottom:12px">
+      <div class="seg" id="mode">
+        <button type="button" data-mode="keyword" class="on">Keyword</button>
+        <button type="button" data-mode="hashtag">Hashtag</button>
+      </div>
+      <label class="grow"><span id="qLabel">Search terms</span>
+        <input id="q" type="text" placeholder="e.g. home workout">
+      </label>
+      <label class="inline" id="strictWrap" style="display:none"><input id="strict" type="checkbox" checked> Only videos that actually use the hashtag</label>
+    </div>
+
+    <div class="grid">
+      <label>Format
+        <select id="format">
+          <option value="all">Shorts + long-form</option>
+          <option value="short">Shorts only</option>
+          <option value="long">Long-form only</option>
+        </select>
+      </label>
+      <label>Min views <input id="minViews" type="number" min="0" value="10000"></label>
+      <label>Min subscribers <input id="minSubs" type="number" min="0" value="0"></label>
+      <label>Max subscribers <input id="maxSubs" type="number" min="0" placeholder="no limit"></label>
+      <label>Min outlier score (×) <input id="minScore" type="number" min="0" step="0.5" value="3"></label>
+      <label>Uploaded
+        <select id="dateRange">
+          <option value="">Any time</option>
+          <option value="1">Last 24 hours</option>
+          <option value="7">Last 7 days</option>
+          <option value="30" selected>Last 30 days</option>
+          <option value="90">Last 90 days</option>
+          <option value="365">Last year</option>
+          <option value="custom">Custom range…</option>
+        </select>
+      </label>
+      <label class="custom-date" style="display:none">From <input id="dateFrom" type="date"></label>
+      <label class="custom-date" style="display:none">To <input id="dateTo" type="date"></label>
+    </div>
+
+    <details style="margin-top:14px">
+      <summary>Advanced</summary>
+      <div class="grid" style="margin-top:12px">
+        <label>Search order
+          <select id="order">
+            <option value="viewCount">Most viewed</option>
+            <option value="relevance">Relevance</option>
+            <option value="date">Newest</option>
+          </select>
+        </label>
+        <label>Result pages (50 videos, 100 units each)
+          <select id="pages">
+            <option>1</option><option selected>2</option><option>3</option><option>4</option><option>5</option>
+          </select>
+        </label>
+        <label>Baseline size (recent uploads per channel)
+          <input id="baselineN" type="number" min="5" max="50" value="30">
+        </label>
+        <label>Region code (optional) <input id="region" type="text" maxlength="2" placeholder="US"></label>
+        <label>Language (optional) <input id="lang" type="text" maxlength="5" placeholder="en"></label>
+      </div>
+    </details>
+
+    <div class="row" style="margin-top:16px; justify-content:space-between">
+      <span class="status" id="status">Ready.</span>
+      <button class="primary" id="go">Find outliers</button>
+    </div>
+  </div>
+
+  <div class="error" id="error"></div>
+
+  <div class="panel" id="resultsPanel" style="display:none">
+    <div class="toolbar">
+      <span class="status" id="summary"></span>
+      <button class="ghost" id="csv">Export CSV</button>
+    </div>
+    <div class="tablewrap">
+      <table>
+        <thead><tr>
+          <th></th>
+          <th data-sort="title">Video</th>
+          <th class="num" data-sort="score">Outlier ×</th>
+          <th class="num" data-sort="views">Views</th>
+          <th class="num" data-sort="median">Channel median</th>
+          <th class="num" data-sort="subs">Subs</th>
+          <th class="num" data-sort="viewsPerSub">Views / sub</th>
+          <th class="num" data-sort="viewsPerDay">Views / day</th>
+          <th class="num" data-sort="ageDays">Age</th>
+        </tr></thead>
+        <tbody id="tbody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <details class="panel">
+    <summary>How the outlier score works</summary>
+    <p><b>Outlier score = video views ÷ median views of the channel's recent uploads.</b> A score of 5× means the video got five times as many views as a typical video on that channel.</p>
+    <ul>
+      <li>The baseline is the channel's last <i>N</i> uploads (Advanced → Baseline size). It leaves out the video being scored and any upload younger than 48 hours, which hasn't collected its views yet.</li>
+      <li>Shorts are compared with the channel's other Shorts, and long-form videos with its other long-form videos. If a channel has fewer than 5 uploads of that format, all of its uploads are used.</li>
+      <li>A video counts as a Short if it runs 3 minutes or less, or has <code>#shorts</code> in its title or description.</li>
+      <li>Hashtag mode searches for <code>#tag</code>. With the strict option on, it keeps only videos whose title, description or tags contain that hashtag. That's the closest the API gets to a YouTube hashtag page.</li>
+      <li>Channel baselines are cached in this browser for 12 hours, so repeat searches cost less quota.</li>
+    </ul>
+  </details>
+</main>
+
+<script>
+(() => {
+  const API = 'https://www.googleapis.com/youtube/v3/';
+  const BASELINE_TTL = 12 * 3600 * 1000;
+  const MIN_AGE_FOR_BASELINE = 48 * 3600 * 1000;
+  const $ = (id) => document.getElementById(id);
+
+  // ---------- storage helpers (all guarded) ----------
+  const store = {
+    get(k) { try { const v = localStorage.getItem(k); return v == null ? null : JSON.parse(v); } catch { return null; } },
+    set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} },
+    del(k) { try { localStorage.removeItem(k); } catch {} },
+  };
+
+  // ---------- quota tracking (resets midnight Pacific) ----------
+  const ptDate = () => new Date().toLocaleDateString('en-CA', { timeZone: 'America/Los_Angeles' });
+  function getQuota() { const q = store.get('ob:quota'); return q && q.date === ptDate() ? q.used : 0; }
+  function addQuota(n) { store.set('ob:quota', { date: ptDate(), used: getQuota() + n }); showQuota(); }
+  function showQuota() { $('quota').textContent = `Quota used today (this browser): ~${getQuota().toLocaleString()} / 10,000`; }
+
+  // ---------- API ----------
+  let apiKey = '';
+  async function yt(endpoint, params, cost) {
+    const url = new URL(API + endpoint);
+    for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== null && v !== '') url.searchParams.set(k, v);
+    url.searchParams.set('key', apiKey);
+    const res = await fetch(url);
+    addQuota(cost);
+    let data;
+    try { data = await res.json(); } catch { data = {}; }
+    if (!res.ok) {
+      const reason = data.error?.errors?.[0]?.reason || '';
+      let msg = (data.error?.message || `HTTP ${res.status}`).replace(/<[^>]+>/g, '');
+      if (reason === 'quotaExceeded') msg = 'Daily API quota exceeded. It resets at midnight Pacific time.';
+      throw new Error(msg);
+    }
+    return data;
+  }
+  const chunk = (arr, n) => { const out = []; for (let i = 0; i < arr.length; i += n) out.push(arr.slice(i, i + n)); return out; };
+  async function runPool(items, limit, fn) {
+    let i = 0;
+    const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+      while (i < items.length) { const idx = i++; await fn(items[idx], idx); }
+    });
+    await Promise.all(workers);
+  }
+
+  // ---------- parsing ----------
+  function parseDuration(iso) {
+    const m = /^P(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?)?$/.exec(iso || '');
+    if (!m) return 0;
+    return (+m[1] || 0) * 86400 + (+m[2] || 0) * 3600 + (+m[3] || 0) * 60 + (+m[4] || 0);
+  }
+  function isShort(seconds, title, desc) {
+    if (seconds > 0 && seconds <= 180) return true;
+    return /#shorts\b/i.test(title || '') || /#shorts\b/i.test(desc || '');
+  }
+  function fmtDuration(s) {
+    const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
+    return h ? `${h}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}` : `${m}:${String(sec).padStart(2, '0')}`;
+  }
+  const median = (a) => { if (!a.length) return null; const s = [...a].sort((x, y) => x - y); const mid = s.length >> 1; return s.length % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2; };
+  const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const compact = (n) => n == null ? '—' : Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 1 }).format(n);
+  const normTag = (s) => s.trim().replace(/^#+/, '').replace(/\s+/g, '').toLowerCase();
+
+  function hasHashtag(v, tag) {
+    const re = new RegExp('#' + tag.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(?![\\p{L}\\p{N}_])', 'iu');
+    if (re.test(v.title) || re.test(v.description)) return true;
+    return (v.tags || []).some((t) => normTag(t) === tag);
+  }
+
+  // ---------- data fetching ----------
+  async function fetchVideos(ids) {
+    const out = [];
+    for (const group of chunk(ids, 50)) {
+      const data = await yt('videos', { part: 'snippet,statistics,contentDetails', id: group.join(','), maxResults: 50 }, 1);
+      for (const it of data.items || []) {
+        const seconds = parseDuration(it.contentDetails?.duration);
+        out.push({
+          id: it.id,
+          title: it.snippet.title,
+          description: it.snippet.description || '',
+          tags: it.snippet.tags || [],
+          channelId: it.snippet.channelId,
+          channelTitle: it.snippet.channelTitle,
+          publishedAt: Date.parse(it.snippet.publishedAt),
+          thumb: it.snippet.thumbnails?.medium?.url || it.snippet.thumbnails?.default?.url || '',
+          live: it.snippet.liveBroadcastContent && it.snippet.liveBroadcastContent !== 'none',
+          views: it.statistics?.viewCount != null ? +it.statistics.viewCount : null,
+          likes: it.statistics?.likeCount != null ? +it.statistics.likeCount : null,
+          comments: it.statistics?.commentCount != null ? +it.statistics.commentCount : null,
+          seconds,
+          short: isShort(seconds, it.snippet.title, it.snippet.description),
+        });
+      }
+    }
+    return out;
+  }
+
+  async function fetchChannels(ids) {
+    const map = new Map();
+    for (const group of chunk(ids, 50)) {
+      const data = await yt('channels', { part: 'snippet,statistics,contentDetails', id: group.join(','), maxResults: 50 }, 1);
+      for (const c of data.items || []) {
+        map.set(c.id, {
+          id: c.id,
+          title: c.snippet.title,
+          subs: c.statistics.hiddenSubscriberCount ? null : +c.statistics.subscriberCount,
+          uploads: c.contentDetails?.relatedPlaylists?.uploads,
+        });
+      }
+    }
+    return map;
+  }
+
+  async function fetchBaseline(channel, n) {
+    const key = `ob:base:${channel.id}:${n}`;
+    const cached = store.get(key);
+    if (cached && Date.now() - cached.t < BASELINE_TTL) return cached.items;
+    if (!channel.uploads) return [];
+    const pl = await yt('playlistItems', { part: 'contentDetails', playlistId: channel.uploads, maxResults: Math.min(n, 50) }, 1);
+    const ids = (pl.items || []).map((i) => i.contentDetails.videoId).filter(Boolean);
+    if (!ids.length) return [];
+    const vids = await fetchVideos(ids);
+    const items = vids.filter((v) => v.views != null && !v.live).map((v) => ({ id: v.id, v: v.views, s: v.short ? 1 : 0, t: v.publishedAt }));
+    store.set(key, { t: Date.now(), items });
+    return items;
+  }
+
+  function scoreVideo(video, baseline) {
+    const now = Date.now();
+    const usable = baseline.filter((b) => b.id !== video.id && now - b.t >= MIN_AGE_FOR_BASELINE);
+    const same = usable.filter((b) => !!b.s === video.short);
+    const pool = same.length >= 5 ? same : usable;
+    const med = median(pool.map((b) => b.v));
+    return { median: med, baselineCount: pool.length, score: med && med > 0 ? video.views / med : null };
+  }
+
+  // ---------- UI state ----------
+  let mode = 'keyword';
+  let rows = [];
+  let sortKey = 'score', sortAsc = false;
+  let lastMeta = null;
+
+  function readFilters() {
+    const num = (id) => { const v = $(id).value.trim(); return v === '' ? null : Number(v); };
+    let after = null, before = null;
+    const dr = $('dateRange').value;
+    if (dr === 'custom') {
+      if ($('dateFrom').value) after = new Date($('dateFrom').value + 'T00:00:00').getTime();
+      if ($('dateTo').value) before = new Date($('dateTo').value + 'T23:59:59').getTime();
+    } else if (dr) {
+      after = Date.now() - Number(dr) * 86400000;
+    }
+    return {
+      format: $('format').value,
+      minViews: num('minViews') ?? 0,
+      minSubs: num('minSubs') ?? 0,
+      maxSubs: num('maxSubs'),
+      minScore: num('minScore') ?? 0,
+      after, before,
+      strict: $('strict').checked,
+    };
+  }
+
+  function passesPre(v, ch, f, tag) {
+    if (v.live || v.views == null) return false;
+    if (v.views < f.minViews) return false;
+    if (f.format === 'short' && !v.short) return false;
+    if (f.format === 'long' && v.short) return false;
+    if (f.after && v.publishedAt < f.after) return false;
+    if (f.before && v.publishedAt > f.before) return false;
+    if (tag && f.strict && !hasHashtag(v, tag)) return false;
+    if (!ch) return false;
+    if (f.minSubs > 0 || f.maxSubs != null) {
+      if (ch.subs == null) return false;
+      if (ch.subs < f.minSubs) return false;
+      if (f.maxSubs != null && ch.subs > f.maxSubs) return false;
+    }
+    return true;
+  }
+
+  function setStatus(t) { $('status').textContent = t; }
+  function showError(msg) { const e = $('error'); e.textContent = msg; e.style.display = msg ? 'block' : 'none'; }
+
+  async function run() {
+    showError('');
+    apiKey = $('apiKey').value.trim();
+    if (!apiKey) return showError('Enter a YouTube Data API key first.');
+    if ($('saveKey').checked) store.set('ob:key', apiKey); else store.del('ob:key');
+
+    const raw = $('q').value.trim();
+    const tag = mode === 'hashtag' ? normTag(raw) : null;
+    if (!raw || (mode === 'hashtag' && !tag)) return showError(mode === 'hashtag' ? 'Enter a hashtag.' : 'Enter search terms.');
+    const q = tag ? '#' + tag : raw;
+
+    const f = readFilters();
+    const pages = Number($('pages').value);
+    const n = Math.max(5, Math.min(50, Number($('baselineN').value) || 30));
+    const btn = $('go');
+    btn.disabled = true;
+    const startQuota = getQuota();
+
+    try {
+      // 1. search
+      const ids = new Set();
+      let token;
+      for (let p = 0; p < pages; p++) {
+        setStatus(`Searching YouTube (page ${p + 1}/${pages})…`);
+        const data = await yt('search', {
+          part: 'id', type: 'video', q, maxResults: 50, order: $('order').value,
+          publishedAfter: f.after ? new Date(f.after).toISOString() : undefined,
+          publishedBefore: f.before ? new Date(f.before).toISOString() : undefined,
+          videoDuration: f.format === 'short' ? 'short' : undefined,
+          regionCode: $('region').value.trim().toUpperCase() || undefined,
+          relevanceLanguage: $('lang').value.trim() || undefined,
+          pageToken: token,
+        }, 100);
+        for (const it of data.items || []) if (it.id?.videoId) ids.add(it.id.videoId);
+        token = data.nextPageToken;
+        if (!token) break;
+      }
+      if (!ids.size) { rows = []; lastMeta = { found: 0, q }; render(); setStatus('No videos found.'); return; }
+
+      // 2. video details
+      setStatus(`Loading stats for ${ids.size} videos…`);
+      const videos = await fetchVideos([...ids]);
+
+      // 3. channel details
+      const chIds = [...new Set(videos.map((v) => v.channelId))];
+      setStatus(`Loading ${chIds.length} channels…`);
+      const channels = await fetchChannels(chIds);
+
+      // 4. pre-filter so we only pay for baselines we need
+      const candidates = videos.filter((v) => passesPre(v, channels.get(v.channelId), f, tag));
+      const needCh = [...new Set(candidates.map((v) => v.channelId))];
+
+      // 5. channel baselines
+      const baselines = new Map();
+      let done = 0;
+      await runPool(needCh, 6, async (cid) => {
+        try { baselines.set(cid, await fetchBaseline(channels.get(cid), n)); }
+        catch (e) { if (/quota/i.test(e.message)) throw e; baselines.set(cid, []); }
+        setStatus(`Computing channel baselines… ${++done}/${needCh.length}`);
+      });
+
+      // 6. score
+      const now = Date.now();
+      rows = candidates.map((v) => {
+        const ch = channels.get(v.channelId);
+        const s = scoreVideo(v, baselines.get(v.channelId) || []);
+        const ageDays = Math.max((now - v.publishedAt) / 86400000, 1 / 24);
+        return {
+          ...v,
+          channelTitle: ch?.title || v.channelTitle,
+          subs: ch?.subs ?? null,
+          median: s.median,
+          baselineCount: s.baselineCount,
+          score: s.score,
+          viewsPerSub: ch?.subs ? v.views / ch.subs : null,
+          ageDays,
+          viewsPerDay: v.views / ageDays,
+        };
+      });
+      lastMeta = { found: videos.length, q, tag, minScore: f.minScore };
+      render();
+      setStatus(`Done. This search used about ${(getQuota() - startQuota).toLocaleString()} quota units.`);
+    } catch (e) {
+      showError(e.message || String(e));
+      setStatus('Stopped.');
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  function visibleRows() {
+    const minScore = Number($('minScore').value) || 0;
+    const list = rows.filter((r) => minScore <= 0 || (r.score != null && r.score >= minScore));
+    const dir = sortAsc ? 1 : -1;
+    return list.sort((a, b) => {
+      const x = a[sortKey], y = b[sortKey];
+      if (x == null && y == null) return 0;
+      if (x == null) return 1;
+      if (y == null) return -1;
+      return (typeof x === 'string' ? x.localeCompare(y) : x - y) * dir;
+    });
+  }
+
+  function scoreBadge(s) {
+    if (s == null) return '<span class="status">—</span>';
+    const cls = s >= 10 ? 's3' : s >= 3 ? 's2' : 's1';
+    return `<span class="score ${cls}">${s >= 100 ? Math.round(s) : s.toFixed(1)}×</span>`;
+  }
+  function fmtAge(d) {
+    if (d < 1) return `${Math.round(d * 24)}h`;
+    if (d < 60) return `${Math.round(d)}d`;
+    if (d < 730) return `${Math.round(d / 30)}mo`;
+    return `${(d / 365).toFixed(1)}y`;
+  }
+
+  function render() {
+    $('resultsPanel').style.display = '';
+    const list = visibleRows();
+    document.querySelectorAll('th[data-sort]').forEach((th) => {
+      th.classList.toggle('active', th.dataset.sort === sortKey);
+      th.classList.toggle('asc', th.dataset.sort === sortKey && sortAsc);
+    });
+    const m = lastMeta || {};
+    $('summary').textContent = `${list.length} outlier${list.length === 1 ? '' : 's'} shown · ${rows.length} passed filters · ${m.found ?? 0} videos scanned for “${m.q ?? ''}”`;
+    if (!list.length) {
+      $('tbody').innerHTML = `<tr><td colspan="9" class="empty">No videos matched. Try a lower minimum score or views, a wider date range, or more result pages.</td></tr>`;
+      return;
+    }
+    $('tbody').innerHTML = list.map((r) => `
+      <tr>
+        <td class="thumb"><a href="https://www.youtube.com/${r.short ? 'shorts/' : 'watch?v='}${esc(r.id)}" target="_blank" rel="noopener"><img loading="lazy" src="${esc(r.thumb)}" alt=""></a></td>
+        <td class="title">
+          <a href="https://www.youtube.com/${r.short ? 'shorts/' : 'watch?v='}${esc(r.id)}" target="_blank" rel="noopener">${esc(r.title)}</a>
+          <span class="badge">${r.short ? 'Short' : 'Long'} · ${fmtDuration(r.seconds)}</span>
+          <div class="ch"><a href="https://www.youtube.com/channel/${esc(r.channelId)}" target="_blank" rel="noopener">${esc(r.channelTitle)}</a></div>
+        </td>
+        <td class="num">${scoreBadge(r.score)}</td>
+        <td class="num">${compact(r.views)}</td>
+        <td class="num" title="${r.baselineCount} videos in baseline">${compact(r.median)}</td>
+        <td class="num">${r.subs == null ? 'hidden' : compact(r.subs)}</td>
+        <td class="num">${r.viewsPerSub == null ? '—' : r.viewsPerSub.toFixed(1) + '×'}</td>
+        <td class="num">${compact(r.viewsPerDay)}</td>
+        <td class="num">${fmtAge(r.ageDays)}</td>
+      </tr>`).join('');
+  }
+
+  function exportCsv() {
+    const list = visibleRows();
+    const cols = ['title', 'url', 'format', 'durationSec', 'channel', 'channelUrl', 'outlierScore', 'views', 'channelMedian', 'baselineVideos', 'subs', 'viewsPerSub', 'viewsPerDay', 'publishedAt', 'likes', 'comments'];
+    const cell = (v) => { const s = v == null ? '' : String(v); return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
+    const lines = [cols.join(',')].concat(list.map((r) => [
+      r.title, `https://www.youtube.com/${r.short ? 'shorts/' : 'watch?v='}${r.id}`, r.short ? 'short' : 'long', r.seconds,
+      r.channelTitle, `https://www.youtube.com/channel/${r.channelId}`, r.score?.toFixed(2), r.views, r.median, r.baselineCount,
+      r.subs, r.viewsPerSub?.toFixed(2), Math.round(r.viewsPerDay), new Date(r.publishedAt).toISOString(), r.likes, r.comments,
+    ].map(cell).join(',')));
+    const blob = new Blob([lines.join('\n')], { type: 'text/csv' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `outliers-${(lastMeta?.q || 'search').replace(/[^\w-]+/g, '_')}.csv`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  }
+
+  // ---------- wiring ----------
+  $('mode').addEventListener('click', (e) => {
+    const b = e.target.closest('button[data-mode]');
+    if (!b) return;
+    mode = b.dataset.mode;
+    document.querySelectorAll('#mode button').forEach((x) => x.classList.toggle('on', x === b));
+    $('qLabel').textContent = mode === 'hashtag' ? 'Hashtag' : 'Search terms';
+    $('q').placeholder = mode === 'hashtag' ? 'e.g. #fitness' : 'e.g. home workout';
+    $('strictWrap').style.display = mode === 'hashtag' ? '' : 'none';
+  });
+  $('dateRange').addEventListener('change', () => {
+    const show = $('dateRange').value === 'custom';
+    document.querySelectorAll('.custom-date').forEach((el) => (el.style.display = show ? '' : 'none'));
+  });
+  document.querySelectorAll('th[data-sort]').forEach((th) => th.addEventListener('click', () => {
+    if (sortKey === th.dataset.sort) sortAsc = !sortAsc;
+    else { sortKey = th.dataset.sort; sortAsc = th.dataset.sort === 'title' || th.dataset.sort === 'ageDays'; }
+    render();
+  }));
+  $('minScore').addEventListener('input', () => { if (lastMeta) render(); });
+  $('go').addEventListener('click', run);
+  $('q').addEventListener('keydown', (e) => { if (e.key === 'Enter') run(); });
+  $('csv').addEventListener('click', exportCsv);
+
+  const savedKey = store.get('ob:key');
+  if (savedKey) { $('apiKey').value = savedKey; $('saveKey').checked = true; }
+  showQuota();
+
+  // exposed for tests
+  window.__outlier = { parseDuration, isShort, median, scoreVideo, hasHashtag, normTag };
+})();
+</script>
+</body>
+</html>
