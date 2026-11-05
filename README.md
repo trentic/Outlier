@@ -48,6 +48,20 @@ The top 4 topics start selected. Click chips to turn them on or off, or add your
 
 The YouTube API has no endpoint for hashtag pages, so the tool searches for `#tag`. With **"Only videos that actually use the hashtag"** turned on, it keeps only videos whose title, description or tags contain exactly that hashtag (`#fitness` won't match `#fitnessgear`).
 
+## Deep scan
+
+YouTube's search doesn't sort *every* matching video by views. It sorts only a limited set it picks itself, so a huge outlier can be missing from a normal search. **Deep scan** splits the date range into time windows (3, 5 or 8) and asks for the most-viewed videos in each one, plus one relevance search over the whole range. Each window has its own top list, so many more big videos come back. In hashtag mode it also searches the tag without the `#` (`starwars`), and you can add extra terms like `star wars`.
+
+Cost: windows + 1 searches per search term, at 100 units each. A hashtag with 5 windows costs about 1,200 units, or about 1,800 with one extra term. The page shows the estimate before you search.
+
+## Why isn't a video showing?
+
+Paste any video link into the checker. It tests the video against your current mode, filters and last search, then tells you whether:
+- a filter removed it, and which one (for example "3,000,000 subs; range is 0–1,000,000"), or
+- it passes every filter but YouTube's search didn't return it, in which case try Deep scan.
+
+Each check costs about 2–4 units.
+
 ## Quota
 
 The free daily quota is 10,000 units and resets at midnight Pacific time.

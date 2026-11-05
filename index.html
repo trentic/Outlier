@@ -82,6 +82,18 @@ code { background: var(--row-hover); padding: 1px 4px; border-radius: 4px; }
 .niche-block { margin-top: 12px; }
 .niche-block h3 { font-size: 12px; color: var(--muted); font-weight: 600; margin: 0 0 6px; }
 .via { font-size: 11px; color: var(--muted); }
+.checks { list-style: none; padding: 0; margin: 10px 0 0; }
+.checks li { padding: 5px 0; border-bottom: 1px solid var(--border); display: flex; gap: 10px; }
+.checks .mark { font-weight: 700; width: 16px; flex: none; }
+.checks .ok { color: var(--good); }
+.checks .bad { color: var(--err); }
+.checks .detail { color: var(--muted); }
+.verdict { padding: 10px 12px; border-radius: 8px; font-weight: 600; }
+.verdict.good { background: var(--good-bg); color: var(--good); }
+.verdict.bad { background: var(--err-bg); color: var(--err); }
+.verdict.warn { background: var(--warn-bg); color: var(--warn); }
+.check-video { display: flex; gap: 12px; align-items: center; margin-bottom: 10px; }
+.check-video img { width: 120px; aspect-ratio: 16/9; object-fit: cover; border-radius: 6px; background: var(--border); }
 </style>
 </head>
 <body>
@@ -209,8 +221,19 @@ code { background: var(--row-hover); padding: 1px 4px; border-radius: 4px; }
       </div>
     </details>
 
+    <div class="row" style="margin-top:14px">
+      <label class="inline"><input id="deep" type="checkbox"> Deep scan: finds outliers a normal search misses, but costs more</label>
+      <label id="deepWinWrap" style="display:none">Time windows
+        <select id="deepWindows"><option>3</option><option selected>5</option><option>8</option></select>
+      </label>
+      <label class="grow" id="deepExtraWrap" style="display:none">Extra search terms (optional, comma-separated)
+        <input id="deepExtra" type="text" placeholder="e.g. star wars, jedi">
+      </label>
+    </div>
+    <div class="hint" id="deepHint" style="display:none">Deep scan splits the date range into windows and asks YouTube for the most-viewed videos in each one, plus one relevance search. Hashtags are also searched without the #. Each window is its own top list, so far more big videos come back.</div>
+
     <div class="row" style="margin-top:16px; justify-content:space-between">
-      <span class="status" id="status">Ready.</span>
+      <span class="status"><span id="status">Ready.</span> <span id="cost"></span></span>
       <button class="primary" id="go">Find outliers</button>
     </div>
   </div>
@@ -238,6 +261,18 @@ code { background: var(--row-hover); padding: 1px 4px; border-radius: 4px; }
         <tbody id="tbody"></tbody>
       </table>
     </div>
+  </div>
+
+  <div class="panel">
+    <h2>Why isn't a video showing?</h2>
+    <div class="row">
+      <label class="grow">Video link
+        <input id="checkUrl" type="text" placeholder="https://www.youtube.com/shorts/…">
+      </label>
+      <button class="ghost" id="checkBtn" type="button">Check</button>
+    </div>
+    <div class="hint">Checks the video against your current mode, filters and last search. Costs about 2–4 quota units.</div>
+    <div id="checkOut" style="margin-top:12px"></div>
   </div>
 
   <details class="panel">
@@ -432,6 +467,7 @@ code { background: var(--row-hover); padding: 1px 4px; border-radius: 4px; }
   let rows = [];
   let sortKey = 'score', sortAsc = false;
   let lastMeta = null;
+  let lastSearch = null; // { via: Map(videoId -> queries), label }
 
   function readFilters() {
     const num = (id) => { const v = $(id).value.trim(); return v === '' ? null : Number(v); };
@@ -455,24 +491,108 @@ code { background: var(--row-hover); padding: 1px 4px; border-radius: 4px; }
     };
   }
 
-  function passesPre(v, ch, f, excludeChannelId) {
-    if (v.live || v.views == null) return false;
-    if (excludeChannelId && v.channelId === excludeChannelId) return false;
-    if (v.views < f.minViews) return false;
-    if (f.format === 'short' && !v.short) return false;
-    if (f.format === 'long' && v.short) return false;
-    if (f.language === 'en' && !looksEnglish(v)) return false;
-    if (f.after && v.publishedAt < f.after) return false;
-    if (f.before && v.publishedAt > f.before) return false;
-    // A video found only through hashtag searches must actually carry one of those hashtags.
-    if (f.strict && v.via && !v.via.some((qq) => !qq.tag || hasHashtag(v, qq.tag))) return false;
-    if (!ch) return false;
-    if (f.minSubs > 0 || f.maxSubs != null) {
-      if (ch.subs == null) return false;
-      if (ch.subs < f.minSubs) return false;
-      if (f.maxSubs != null && ch.subs > f.maxSubs) return false;
+  // Every filter as a named check, so the search and the "why isn't it showing" checker use the same rules.
+  function filterChecks(v, ch, f, excludeChannelId, viaQueries) {
+    const out = [];
+    const add = (name, ok, detail) => out.push({ name, ok, detail });
+    const n = (x) => Number(x).toLocaleString();
+    add('Public, not live', !v.live && v.views != null,
+      v.live ? 'It is a live or upcoming stream.' : v.views == null ? 'Its view count is hidden.' : `${n(v.views)} views`);
+    if (v.live || v.views == null) return out;
+    if (excludeChannelId) add('Not your own channel', v.channelId !== excludeChannelId, v.channelId === excludeChannelId ? 'This is your channel, so it is left out.' : '');
+    add('Min views', v.views >= f.minViews, `${n(v.views)} views; minimum is ${n(f.minViews)}`);
+    if (f.format !== 'all') {
+      add('Format', f.format === 'short' ? v.short : !v.short,
+        `It counts as ${v.short ? 'a Short' : 'long-form'} (${fmtDuration(v.seconds)}); filter is ${f.format === 'short' ? 'Shorts only' : 'long-form only'}`);
     }
-    return true;
+    if (f.language === 'en') {
+      add('English only', looksEnglish(v), v.lang ? `Creator's language setting: “${v.lang}”` : 'No language setting, so it was judged by its title and description');
+    }
+    if (f.after || f.before) {
+      const d = new Date(v.publishedAt).toLocaleDateString();
+      add('Upload date', !(f.after && v.publishedAt < f.after) && !(f.before && v.publishedAt > f.before), `Uploaded ${d}`);
+    }
+    const tags = (viaQueries || []).filter((q) => q.tag).map((q) => '#' + q.tag);
+    if (f.strict && tags.length) {
+      // A video found only through hashtag searches must actually carry one of those hashtags.
+      add('Uses the hashtag', viaQueries.some((q) => !q.tag || hasHashtag(v, q.tag)), `Looked for ${[...new Set(tags)].join(', ')} in its title, description and tags`);
+    }
+    add('Channel found', !!ch, ch ? '' : 'The channel could not be loaded.');
+    if (ch && (f.minSubs > 0 || f.maxSubs != null)) {
+      const range = `${n(f.minSubs)}–${f.maxSubs != null ? n(f.maxSubs) : 'no limit'}`;
+      add('Subscriber range', ch.subs != null && ch.subs >= f.minSubs && (f.maxSubs == null || ch.subs <= f.maxSubs),
+        ch.subs == null ? 'The channel hides its subscriber count, and hidden counts are left out when a sub range is set.' : `${n(ch.subs)} subs; range is ${range}`);
+    }
+    return out;
+  }
+  const passesPre = (v, ch, f, excludeChannelId, viaQueries) => filterChecks(v, ch, f, excludeChannelId, viaQueries).every((c) => c.ok);
+
+  // Which searches to run and what to call them.
+  function buildQueries() {
+    if (mode === 'niche') {
+      if (!niche) return { error: 'Analyze your channel first.' };
+      const queries = niche.topics.concat(niche.hashtags).filter((t) => t.on).map(toQuery);
+      if (!queries.length) return { error: 'Select at least one topic or hashtag to search.' };
+      return { queries, label: `your niche (${queries.length} topic${queries.length === 1 ? '' : 's'})`, excludeChannelId: niche.channel.id };
+    }
+    const raw = $('q').value.trim();
+    const tag = mode === 'hashtag' ? normTag(raw) : null;
+    if (!raw || (mode === 'hashtag' && !tag)) return { error: mode === 'hashtag' ? 'Enter a hashtag.' : 'Enter search terms.' };
+    const main = tag ? { q: '#' + tag, label: '#' + tag, tag } : { q: raw, label: raw, tag: null };
+    const queries = [main];
+    if ($('deep').checked) {
+      // In hashtag mode, extra terms are more ways to find the same hashtag. In keyword mode they are extra searches.
+      for (const term of $('deepExtra').value.split(',').map((s) => s.trim()).filter(Boolean)) {
+        if (tag) (main.extra ||= []).push(term);
+        else queries.push({ q: term, label: term, tag: null });
+      }
+    }
+    return { queries, label: main.q, excludeChannelId: null };
+  }
+
+  // Deep scan windows: equal slices of the chosen date range, or widening slices back from today for "Any time".
+  function makeWindows(after, before, count) {
+    const end = before ?? Date.now();
+    if (after) {
+      const step = (end - after) / count;
+      return Array.from({ length: count }, (_, i) => [after + i * step, after + (i + 1) * step]);
+    }
+    const days = [0];
+    for (let i = 0; i < count - 1; i++) days.push(Math.round(7 * Math.pow(1825 / 7, i / Math.max(count - 2, 1))));
+    const edges = days.map((d) => end - d * 86400000);
+    const wins = [];
+    for (let i = 0; i < edges.length - 1; i++) wins.push([edges[i + 1], edges[i]]);
+    wins.push([null, edges[edges.length - 1]]);
+    return wins;
+  }
+
+  // Turn queries into individual search.list calls.
+  function planJobs(queries, f) {
+    const deep = $('deep').checked;
+    const jobs = [];
+    for (const query of queries) {
+      const texts = [query.q];
+      if (deep && query.tag) texts.push(query.tag);
+      if (query.extra) texts.push(...query.extra);
+      for (const text of [...new Set(texts)]) {
+        if (!deep) {
+          jobs.push({ query, q: text, order: $('order').value, after: f.after, before: f.before, pages: Number(mode === 'niche' ? $('nichePages').value : $('pages').value) });
+          continue;
+        }
+        for (const [a, b] of makeWindows(f.after, f.before, Number($('deepWindows').value))) {
+          jobs.push({ query, q: text, order: 'viewCount', after: a, before: b, pages: 1 });
+        }
+        jobs.push({ query, q: text, order: 'relevance', after: f.after, before: f.before, pages: 1 });
+      }
+    }
+    return jobs;
+  }
+
+  function updateCost() {
+    const plan = buildQueries();
+    if (plan.error) { $('cost').textContent = ''; return; }
+    const pages = planJobs(plan.queries, readFilters()).reduce((s, j) => s + j.pages, 0);
+    $('cost').textContent = `· Next search: up to ~${(pages * 100).toLocaleString()} units, plus about 2 per new channel.`;
   }
 
   function setStatus(t) { $('status').textContent = t; }
@@ -484,24 +604,12 @@ code { background: var(--row-hover); padding: 1px 4px; border-radius: 4px; }
     if (!apiKey) return showError('Enter a YouTube Data API key first.');
     if ($('saveKey').checked) store.set('ob:key', apiKey); else store.del('ob:key');
 
-    let queries, label, excludeChannelId = null;
-    if (mode === 'niche') {
-      if (!niche) return showError('Analyze your channel first.');
-      queries = niche.topics.concat(niche.hashtags).filter((t) => t.on).map(toQuery);
-      if (!queries.length) return showError('Select at least one topic or hashtag to search.');
-      label = `your niche (${queries.length} topic${queries.length === 1 ? '' : 's'})`;
-      excludeChannelId = niche.channel.id;
-    } else {
-      const raw = $('q').value.trim();
-      const tag = mode === 'hashtag' ? normTag(raw) : null;
-      if (!raw || (mode === 'hashtag' && !tag)) return showError(mode === 'hashtag' ? 'Enter a hashtag.' : 'Enter search terms.');
-      queries = [tag ? { q: '#' + tag, label: '#' + tag, tag } : { q: raw, label: raw, tag: null }];
-      label = queries[0].q;
-    }
+    const plan = buildQueries();
+    if (plan.error) return showError(plan.error);
+    const { queries, label, excludeChannelId } = plan;
 
     const f = readFilters();
-    if (mode !== 'hashtag' && mode !== 'niche') f.strict = false;
-    const pages = Number(mode === 'niche' ? $('nichePages').value : $('pages').value);
+    const jobs = planJobs(queries, f);
     const n = Math.max(5, Math.min(50, Number($('baselineN').value) || 30));
     const btn = $('go');
     btn.disabled = true;
@@ -510,14 +618,15 @@ code { background: var(--row-hover); padding: 1px 4px; border-radius: 4px; }
     try {
       // 1. search
       const via = new Map(); // videoId -> [query, ...]
-      for (const [qi, query] of queries.entries()) {
+      for (const [ji, job] of jobs.entries()) {
+        const query = job.query;
         let token;
-        for (let p = 0; p < pages; p++) {
-          setStatus(`Searching “${query.label}”${queries.length > 1 ? ` (${qi + 1}/${queries.length})` : ''}, page ${p + 1}/${pages}…`);
+        for (let p = 0; p < job.pages; p++) {
+          setStatus(`Searching “${job.q}” (search ${ji + 1}/${jobs.length}${job.pages > 1 ? `, page ${p + 1}/${job.pages}` : ''})…`);
           const data = await yt('search', {
-            part: 'id', type: 'video', q: query.q, maxResults: 50, order: $('order').value,
-            publishedAfter: f.after ? new Date(f.after).toISOString() : undefined,
-            publishedBefore: f.before ? new Date(f.before).toISOString() : undefined,
+            part: 'id', type: 'video', q: job.q, maxResults: 50, order: job.order,
+            publishedAfter: job.after ? new Date(job.after).toISOString() : undefined,
+            publishedBefore: job.before ? new Date(job.before).toISOString() : undefined,
             videoDuration: f.format === 'short' ? 'short' : undefined,
             regionCode: $('region').value.trim().toUpperCase() || undefined,
             relevanceLanguage: f.language || undefined,
@@ -533,6 +642,7 @@ code { background: var(--row-hover); padding: 1px 4px; border-radius: 4px; }
           if (!token) break;
         }
       }
+      lastSearch = { via, label };
       if (!via.size) { rows = []; lastMeta = { found: 0, q: label }; render(); setStatus('No videos found.'); return; }
 
       // 2. video details
@@ -546,7 +656,7 @@ code { background: var(--row-hover); padding: 1px 4px; border-radius: 4px; }
       const channels = await fetchChannels(chIds);
 
       // 4. pre-filter so we only pay for baselines we need
-      const candidates = videos.filter((v) => passesPre(v, channels.get(v.channelId), f, excludeChannelId));
+      const candidates = videos.filter((v) => passesPre(v, channels.get(v.channelId), f, excludeChannelId, v.via));
       const needCh = [...new Set(candidates.map((v) => v.channelId))];
 
       // 5. channel baselines
@@ -838,6 +948,68 @@ code { background: var(--row-hover); padding: 1px 4px; border-radius: 4px; }
     $('nicheCost').textContent = `${n} search${n === 1 ? '' : 'es'} selected × ${p} page${p === 1 ? '' : 's'} ≈ ${(n * p * 100).toLocaleString()} units for search, plus about 2 per channel checked.`;
   }
 
+  // ---------- "Why isn't this video showing?" ----------
+  async function checkVideo() {
+    showError('');
+    const out = $('checkOut');
+    apiKey = $('apiKey').value.trim();
+    if (!apiKey) return showError('Enter a YouTube Data API key first.');
+    const m = /(?:youtu\.be\/|[?&]v=|\/shorts\/|\/live\/|\/embed\/)([\w-]{11})/.exec($('checkUrl').value) || /^([\w-]{11})$/.exec($('checkUrl').value.trim());
+    if (!m) return showError('That doesn’t look like a YouTube video link.');
+    $('checkBtn').disabled = true;
+    out.innerHTML = '<span class="status">Checking…</span>';
+    try {
+      const [v] = await fetchVideos([m[1]]);
+      if (!v) throw new Error('Video not found. It may be private, deleted or age-restricted.');
+      const ch = (await fetchChannels([v.channelId])).get(v.channelId);
+      const plan = buildQueries();
+      const f = readFilters();
+      const found = lastSearch?.via.get(v.id);
+      // Hashtag rule: use the searches that actually found it, or else the current mode's searches.
+      const viaQueries = found || (plan.error ? [] : plan.queries);
+      const checks = filterChecks(v, ch, f, plan.excludeChannelId || null, viaQueries);
+
+      let scoreLine = '';
+      if (ch && !v.live && v.views != null) {
+        const n = Math.max(5, Math.min(50, Number($('baselineN').value) || 30));
+        const s = scoreVideo(v, await fetchBaseline(ch, n));
+        const ok = f.minScore <= 0 || (s.score != null && s.score >= f.minScore);
+        checks.push({ name: 'Min outlier score', ok,
+          detail: s.score == null ? 'Not enough older uploads on the channel to work out a median.' :
+            `${s.score.toFixed(1)}× (${v.views.toLocaleString()} views ÷ channel median ${Math.round(s.median).toLocaleString()} over ${s.baselineCount} uploads); minimum is ${f.minScore}×` });
+      }
+
+      const failed = checks.filter((c) => !c.ok);
+      let verdict;
+      if (failed.length) {
+        verdict = `<div class="verdict bad">It’s hidden by ${failed.length === 1 ? 'a filter' : `${failed.length} filters`}: ${failed.map((c) => esc(c.name)).join(', ')}.</div>`;
+      } else if (!lastSearch) {
+        verdict = `<div class="verdict warn">It passes all your current filters. Run a search, then check again to see whether YouTube returns it.</div>`;
+      } else if (found) {
+        verdict = `<div class="verdict good">It was in your last search and passes every filter, so it should be in the results. Try sorting by Views.</div>`;
+      } else {
+        verdict = `<div class="verdict warn">It passes every filter, but YouTube’s search didn’t return it for “${esc(lastSearch.label)}”. Turn on Deep scan, add more time windows, or add extra search terms that match its title.</div>`;
+      }
+
+      const searchLine = lastSearch
+        ? { name: 'Returned by last search', ok: !!found, detail: found ? `Found via ${found.map((q) => esc(q.label)).join(', ')}` : `Not among the ${lastSearch.via.size} videos YouTube returned for “${esc(lastSearch.label)}”` }
+        : null;
+      const list = (searchLine ? [searchLine] : []).concat(checks);
+      out.innerHTML = `
+        <div class="check-video">
+          <img src="${esc(v.thumb)}" alt="">
+          <div><b>${esc(v.title)}</b><div class="status">${esc(ch?.title || v.channelTitle)} · ${v.short ? 'Short' : 'Long-form'} · ${fmtDuration(v.seconds)}</div></div>
+        </div>
+        ${verdict}
+        <ul class="checks">${list.map((c) => `<li><span class="mark ${c.ok ? 'ok' : 'bad'}">${c.ok ? '✓' : '✗'}</span><span><b>${esc(c.name)}</b> <span class="detail">${c.detail ? '· ' + esc(c.detail) : ''}</span></span></li>`).join('')}</ul>`;
+    } catch (e) {
+      out.innerHTML = '';
+      showError(e.message || String(e));
+    } finally {
+      $('checkBtn').disabled = false;
+    }
+  }
+
   // ---------- wiring ----------
   function setMode(m) {
     mode = m;
@@ -848,7 +1020,21 @@ code { background: var(--row-hover); padding: 1px 4px; border-radius: 4px; }
     $('chWrap').style.display = $('analyze').style.display = $('nichePanel').style.display = mode === 'niche' ? '' : 'none';
     $('strictWrap').style.display = mode === 'keyword' ? 'none' : '';
     store.set('ob:mode', m);
+    syncDeep();
   }
+  function syncDeep() {
+    const on = $('deep').checked;
+    $('deepWinWrap').style.display = $('deepHint').style.display = on ? '' : 'none';
+    $('deepExtraWrap').style.display = on && mode !== 'niche' ? '' : 'none';
+    updateCost();
+  }
+  $('deep').addEventListener('change', syncDeep);
+  // Keep the cost estimate current as settings change.
+  document.querySelector('main').addEventListener('input', updateCost);
+  document.querySelector('main').addEventListener('change', updateCost);
+  document.querySelector('main').addEventListener('click', (e) => { if (e.target.closest('.chip, #addTopicBtn')) setTimeout(updateCost); });
+  $('checkBtn').addEventListener('click', checkVideo);
+  $('checkUrl').addEventListener('keydown', (e) => { if (e.key === 'Enter') checkVideo(); });
   $('mode').addEventListener('click', (e) => {
     const b = e.target.closest('button[data-mode]');
     if (b) setMode(b.dataset.mode);
@@ -901,7 +1087,7 @@ code { background: var(--row-hover); padding: 1px 4px; border-radius: 4px; }
   showQuota();
 
   // exposed for tests
-  window.__outlier = { parseDuration, isShort, median, scoreVideo, hasHashtag, normTag, looksEnglish, extractNiche };
+  window.__outlier = { parseDuration, isShort, median, scoreVideo, hasHashtag, normTag, looksEnglish, extractNiche, makeWindows };
 })();
 </script>
 </body>
