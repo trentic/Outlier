@@ -243,8 +243,19 @@ code { background: var(--row-hover); padding: 1px 4px; border-radius: 4px; }
   <div class="panel" id="resultsPanel" style="display:none">
     <div class="toolbar">
       <span class="status" id="summary"></span>
-      <button class="ghost" id="csv">Export CSV</button>
+      <span class="row">
+        <button class="ghost" id="scoreMore" style="display:none"></button>
+        <button class="ghost" id="csv">Export CSV</button>
+        <button class="ghost" id="clearResults">Clear</button>
+      </span>
     </div>
+    <div class="row" style="margin-bottom:10px">
+      <label class="grow">Filter results by title or channel
+        <input id="resultFilter" type="search" placeholder="e.g. lego">
+      </label>
+      <label class="inline" id="unscoredWrap" style="display:none"><input id="showUnscored" type="checkbox"> Show videos that aren't scored yet</label>
+    </div>
+    <div class="hint" style="margin:-4px 0 10px">Changing any filter above updates these results instantly at no quota cost. <b>Find outliers</b> runs a new search.</div>
     <div class="tablewrap">
       <table>
         <thead><tr>
@@ -466,8 +477,10 @@ code { background: var(--row-hover); padding: 1px 4px; border-radius: 4px; }
   let mode = 'keyword';
   let rows = [];
   let sortKey = 'score', sortAsc = false;
-  let lastMeta = null;
-  let lastSearch = null; // { via: Map(videoId -> queries), label }
+  // The last search: every video YouTube returned, with channel data and the baselines loaded so far.
+  // Filters are re-applied to it whenever they change, and it is saved so it survives a refresh.
+  let scan = null; // { label, multi, excludeChannelId, savedAt, videos:[], channels:{}, baselines:{} }
+  let lastSearch = null; // { via: Map(videoId -> queries), label } for the checker
 
   function readFilters() {
     const num = (id) => { const v = $(id).value.trim(); return v === '' ? null : Number(v); };
@@ -642,8 +655,8 @@ code { background: var(--row-hover); padding: 1px 4px; border-radius: 4px; }
           if (!token) break;
         }
       }
-      lastSearch = { via, label };
-      if (!via.size) { rows = []; lastMeta = { found: 0, q: label }; render(); setStatus('No videos found.'); return; }
+      const newScan = { label, multi: queries.length > 1, excludeChannelId, savedAt: Date.now(), videos: [], channels: {}, baselines: {} };
+      if (!via.size) { setScan(newScan); setStatus('No videos found.'); return; }
 
       // 2. video details
       setStatus(`Loading stats for ${via.size} videos…`);
@@ -668,26 +681,10 @@ code { background: var(--row-hover); padding: 1px 4px; border-radius: 4px; }
         setStatus(`Computing channel baselines… ${++done}/${needCh.length}`);
       });
 
-      // 6. score
-      const now = Date.now();
-      rows = candidates.map((v) => {
-        const ch = channels.get(v.channelId);
-        const s = scoreVideo(v, baselines.get(v.channelId) || []);
-        const ageDays = Math.max((now - v.publishedAt) / 86400000, 1 / 24);
-        return {
-          ...v,
-          channelTitle: ch?.title || v.channelTitle,
-          subs: ch?.subs ?? null,
-          median: s.median,
-          baselineCount: s.baselineCount,
-          score: s.score,
-          viewsPerSub: ch?.subs ? v.views / ch.subs : null,
-          ageDays,
-          viewsPerDay: v.views / ageDays,
-        };
-      });
-      lastMeta = { found: videos.length, q: label, multi: queries.length > 1 };
-      render();
+      newScan.videos = videos;
+      for (const [id, c] of channels) newScan.channels[id] = c;
+      for (const [id, b] of baselines) newScan.baselines[id] = b;
+      setScan(newScan);
       setStatus(`Done. This search used about ${(getQuota() - startQuota).toLocaleString()} quota units.`);
     } catch (e) {
       showError(e.message || String(e));
@@ -697,9 +694,88 @@ code { background: var(--row-hover); padding: 1px 4px; border-radius: 4px; }
     }
   }
 
+  function setScan(next) {
+    scan = next;
+    lastSearch = { via: new Map(scan.videos.map((v) => [v.id, v.via || []])), label: scan.label };
+    saveScan();
+    refresh();
+  }
+
+  function saveScan() {
+    if (!scan) return;
+    // Long descriptions are cut to save space, keeping every hashtag so the hashtag and language checks still work.
+    const slim = (v) => {
+      if (v.description.length <= 600) return v;
+      const tags = (v.description.match(/#[\p{L}\p{N}_]+/gu) || []).join(' ');
+      return { ...v, description: v.description.slice(0, 600) + ' ' + tags };
+    };
+    const data = { ...scan, videos: scan.videos.map(slim) };
+    try { localStorage.setItem('ob:scan', JSON.stringify(data)); }
+    catch {
+      // Browser storage is full: save without descriptions rather than not at all.
+      try { localStorage.setItem('ob:scan', JSON.stringify({ ...data, videos: data.videos.map((v) => ({ ...v, description: (v.description.match(/#[\p{L}\p{N}_]+/gu) || []).join(' ') })) })); } catch {}
+    }
+  }
+
+  // Apply the current filters to the saved scan.
+  function computeRows() {
+    rows = [];
+    if (!scan) return;
+    const f = readFilters();
+    const now = Date.now();
+    for (const v of scan.videos) {
+      const ch = scan.channels[v.channelId];
+      if (!passesPre(v, ch, f, scan.excludeChannelId, v.via)) continue;
+      const base = scan.baselines[v.channelId];
+      const sc = base ? scoreVideo(v, base) : { median: null, baselineCount: 0, score: null };
+      const ageDays = Math.max((now - v.publishedAt) / 86400000, 1 / 24);
+      rows.push({
+        ...v,
+        channelTitle: ch?.title || v.channelTitle,
+        subs: ch?.subs ?? null,
+        median: sc.median,
+        baselineCount: sc.baselineCount,
+        score: sc.score,
+        unscored: !base,
+        viewsPerSub: ch?.subs ? v.views / ch.subs : null,
+        ageDays,
+        viewsPerDay: v.views / ageDays,
+      });
+    }
+  }
+  function refresh() { computeRows(); render(); }
+
+  // Loosening a filter can let in videos whose channel baseline was never loaded.
+  async function scoreMore() {
+    if (!scan) return;
+    showError('');
+    apiKey = $('apiKey').value.trim();
+    if (!apiKey) return showError('Enter a YouTube Data API key first.');
+    const need = [...new Set(rows.filter((r) => r.unscored).map((r) => r.channelId))];
+    const n = Math.max(5, Math.min(50, Number($('baselineN').value) || 30));
+    $('scoreMore').disabled = true;
+    let done = 0;
+    try {
+      await runPool(need, 6, async (cid) => {
+        try { scan.baselines[cid] = await fetchBaseline(scan.channels[cid], n); }
+        catch (e) { if (/quota/i.test(e.message)) throw e; scan.baselines[cid] = []; }
+        setStatus(`Computing channel baselines… ${++done}/${need.length}`);
+      });
+      setStatus('Scores updated.');
+    } catch (e) {
+      showError(e.message || String(e));
+    } finally {
+      $('scoreMore').disabled = false;
+      saveScan();
+      refresh();
+    }
+  }
+
   function visibleRows() {
     const minScore = Number($('minScore').value) || 0;
-    const list = rows.filter((r) => minScore <= 0 || (r.score != null && r.score >= minScore));
+    const text = $('resultFilter').value.trim().toLowerCase();
+    const list = rows.filter((r) => (minScore <= 0 || (r.score != null && r.score >= minScore) || (r.unscored && $('showUnscored').checked))
+      && (!text || r.title.toLowerCase().includes(text) || (r.channelTitle || '').toLowerCase().includes(text)));
     const dir = sortAsc ? 1 : -1;
     return list.sort((a, b) => {
       const x = a[sortKey], y = b[sortKey];
@@ -723,14 +799,20 @@ code { background: var(--row-hover); padding: 1px 4px; border-radius: 4px; }
   }
 
   function render() {
+    if (!scan) { $('resultsPanel').style.display = 'none'; return; }
     $('resultsPanel').style.display = '';
     const list = visibleRows();
+    const unscoredCh = new Set(rows.filter((r) => r.unscored).map((r) => r.channelId)).size;
+    $('scoreMore').style.display = $('unscoredWrap').style.display = unscoredCh ? '' : 'none';
+    $('scoreMore').textContent = `Score ${unscoredCh} more channel${unscoredCh === 1 ? '' : 's'} (~${unscoredCh * 2} units)`;
     document.querySelectorAll('th[data-sort]').forEach((th) => {
       th.classList.toggle('active', th.dataset.sort === sortKey);
       th.classList.toggle('asc', th.dataset.sort === sortKey && sortAsc);
     });
-    const m = lastMeta || {};
-    $('summary').textContent = `${list.length} outlier${list.length === 1 ? '' : 's'} shown · ${rows.length} passed filters · ${m.found ?? 0} videos scanned for “${m.q ?? ''}”`;
+    const m = scan;
+    const ago = Date.now() - m.savedAt;
+    const when = ago < 60000 ? 'just now' : ago < 3600000 ? `${Math.round(ago / 60000)} min ago` : ago < 86400000 ? `${Math.round(ago / 3600000)} h ago` : new Date(m.savedAt).toLocaleDateString();
+    $('summary').textContent = `${list.length} outlier${list.length === 1 ? '' : 's'} shown · ${rows.length} passed filters · ${m.videos.length} videos scanned for “${m.label}” (${when})`;
     if (!list.length) {
       $('tbody').innerHTML = `<tr><td colspan="9" class="empty">No videos matched. Try a lower minimum score or views, a wider date range, or more result pages.</td></tr>`;
       return;
@@ -742,6 +824,7 @@ code { background: var(--row-hover); padding: 1px 4px; border-radius: 4px; }
           <a href="https://www.youtube.com/${r.short ? 'shorts/' : 'watch?v='}${esc(r.id)}" target="_blank" rel="noopener">${esc(r.title)}</a>
           <span class="badge">${r.short ? 'Short' : 'Long'} · ${fmtDuration(r.seconds)}</span>
           <div class="ch"><a href="https://www.youtube.com/channel/${esc(r.channelId)}" target="_blank" rel="noopener">${esc(r.channelTitle)}</a></div>
+          ${r.unscored ? '<div class="via">Not scored yet: use “Score more channels” above</div>' : ''}
           ${m.multi ? `<div class="via">found via ${r.via.map((x) => esc(x.label)).join(', ')}</div>` : ''}
         </td>
         <td class="num">${scoreBadge(r.score)}</td>
@@ -767,7 +850,7 @@ code { background: var(--row-hover); padding: 1px 4px; border-radius: 4px; }
     const blob = new Blob([lines.join('\n')], { type: 'text/csv' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = `outliers-${(lastMeta?.q || 'search').replace(/[^\w-]+/g, '_')}.csv`;
+    a.download = `outliers-${(scan?.label || 'search').replace(/[^\w-]+/g, '_')}.csv`;
     a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 1000);
   }
@@ -906,10 +989,8 @@ code { background: var(--row-hover); padding: 1px 4px; border-radius: 4px; }
         },
       };
 
-      $('pAvatar').src = c.snippet.thumbnails?.default?.url || '';
-      $('pName').textContent = c.snippet.title;
       const stat = (k, v) => `<span>${k} <b>${v}</b></span>`;
-      $('pStats').innerHTML = [
+      const statsHtml = [
         stat('Subscribers', subs == null ? 'hidden' : compact(subs)),
         stat('Uploads analyzed', videos.length),
         stat('Shorts', Math.round(shortPct * 100) + '%'),
@@ -918,10 +999,13 @@ code { background: var(--row-hover); padding: 1px 4px; border-radius: 4px; }
         stat('Uploads / week', (videos.length / (span / 7)).toFixed(1)),
       ].join('');
       const cats = (c.topicDetails?.topicCategories || []).map((u) => decodeURIComponent(u.split('/').pop()).replace(/_/g, ' '));
-      $('pCats').innerHTML = cats.length ? stat('YouTube categories', esc(cats.join(', '))) : '';
-      renderNiche();
-      $('nicheEmpty').style.display = 'none';
-      $('nicheResult').style.display = '';
+      niche.profile = {
+        avatar: c.snippet.thumbnails?.default?.url || '',
+        name: c.snippet.title,
+        statsHtml,
+        catsHtml: cats.length ? stat('YouTube categories', esc(cats.join(', '))) : '',
+      };
+      showNicheProfile();
       setStatus('Channel analyzed. Pick topics, then click Find outliers.');
     } catch (e) {
       showError(e.message || String(e));
@@ -931,8 +1015,19 @@ code { background: var(--row-hover); padding: 1px 4px; border-radius: 4px; }
     }
   }
 
+  function showNicheProfile() {
+    $('pAvatar').src = niche.profile.avatar;
+    $('pName').textContent = niche.profile.name;
+    $('pStats').innerHTML = niche.profile.statsHtml;
+    $('pCats').innerHTML = niche.profile.catsHtml;
+    $('nicheEmpty').style.display = 'none';
+    $('nicheResult').style.display = '';
+    renderNiche();
+  }
+
   function renderNiche() {
     if (!niche) return;
+    store.set('ob:niche', niche);
     const chip = (t, i, kind) => `<button type="button" class="chip${t.on ? ' on' : ''}" data-kind="${kind}" data-i="${i}" title="Used in ${t.df ?? '?'} of your uploads">${esc(t.text)}${t.df ? `<small>${t.df}</small>` : ''}</button>`;
     $('topicChips').innerHTML = niche.topics.map((t, i) => chip(t, i, 'topics')).join('') || '<span class="status">No recurring topics found. Add your own below.</span>';
     $('tagChips').innerHTML = niche.hashtags.map((t, i) => chip(t, i, 'hashtags')).join('') || '<span class="status">No recurring hashtags.</span>';
@@ -1074,7 +1169,35 @@ code { background: var(--row-hover); padding: 1px 4px; border-radius: 4px; }
     else { sortKey = th.dataset.sort; sortAsc = th.dataset.sort === 'title' || th.dataset.sort === 'ageDays'; }
     render();
   }));
-  $('minScore').addEventListener('input', () => { if (lastMeta) render(); });
+  // Filters re-apply to the current results instantly. Only "Find outliers" runs a new search.
+  const LIVE_FILTERS = ['format', 'minViews', 'minSubs', 'maxSubs', 'minScore', 'dateRange', 'dateFrom', 'dateTo', 'language', 'strict'];
+  let refreshTimer;
+  const queueRefresh = () => { clearTimeout(refreshTimer); refreshTimer = setTimeout(() => { if (scan) refresh(); }, 150); };
+  for (const id of LIVE_FILTERS) { $(id).addEventListener('input', queueRefresh); $(id).addEventListener('change', queueRefresh); }
+  $('resultFilter').addEventListener('input', () => { if (scan) render(); });
+  $('showUnscored').addEventListener('change', () => { if (scan) render(); });
+  $('scoreMore').addEventListener('click', scoreMore);
+  $('clearResults').addEventListener('click', () => { scan = null; lastSearch = null; rows = []; store.del('ob:scan'); render(); });
+
+  // Remember every search setting across refreshes.
+  const SAVED_SETTINGS = ['q', 'format', 'minViews', 'minSubs', 'maxSubs', 'minScore', 'dateRange', 'dateFrom', 'dateTo', 'language', 'strict',
+    'order', 'pages', 'nichePages', 'baselineN', 'region', 'deep', 'deepWindows', 'deepExtra', 'showUnscored'];
+  function saveSettings() {
+    const out = {};
+    for (const id of SAVED_SETTINGS) { const el = $(id); out[id] = el.type === 'checkbox' ? el.checked : el.value; }
+    store.set('ob:settings', out);
+  }
+  function loadSettings() {
+    const saved = store.get('ob:settings') || {};
+    for (const id of SAVED_SETTINGS) {
+      if (!(id in saved)) continue;
+      const el = $(id);
+      if (el.type === 'checkbox') el.checked = !!saved[id]; else el.value = saved[id];
+    }
+    document.querySelectorAll('.custom-date').forEach((el) => (el.style.display = $('dateRange').value === 'custom' ? '' : 'none'));
+  }
+  document.querySelector('main').addEventListener('change', saveSettings);
+  document.querySelector('main').addEventListener('input', saveSettings);
   $('go').addEventListener('click', run);
   $('q').addEventListener('keydown', (e) => { if (e.key === 'Enter') run(); });
   $('csv').addEventListener('click', exportCsv);
@@ -1083,7 +1206,17 @@ code { background: var(--row-hover); padding: 1px 4px; border-radius: 4px; }
   if (savedKey) { $('apiKey').value = savedKey; $('saveKey').checked = true; }
   const savedCh = store.get('ob:channelInput');
   if (savedCh) $('channelInput').value = savedCh;
+  loadSettings();
+  const savedNiche = store.get('ob:niche');
+  if (savedNiche?.profile) { niche = savedNiche; showNicheProfile(); }
   setMode(store.get('ob:mode') || 'keyword');
+  const savedScan = store.get('ob:scan');
+  if (savedScan?.videos) {
+    scan = savedScan;
+    lastSearch = { via: new Map(scan.videos.map((v) => [v.id, v.via || []])), label: scan.label };
+    refresh();
+    setStatus('Restored your last search. Change filters to refine it, or click Find outliers to search again.');
+  }
   showQuota();
 
   // exposed for tests

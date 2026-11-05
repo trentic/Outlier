@@ -23,6 +23,13 @@ Live version: https://trentic.github.io/Outlier/
 | Uploaded | Any time, 24h, 7d, 30d, 90d, 1y, or a custom date range |
 | Advanced | Search order, number of result pages (50 videos each), baseline size, region, language |
 
+## Refining results and saved searches
+
+- **Filters apply to your results instantly.** After a search, changing min views, subscriber range, format, language, date range, min score or the hashtag check updates the table straight away, at no quota cost. Only **Find outliers** runs a new search.
+- There's also a **Filter results** box for finding videos by title or channel.
+- If loosening a filter lets in videos whose channel hasn't been scored yet, a **Score N more channels** button appears. It costs about 2 units per channel.
+- **Your last search is saved in your browser.** On refresh, your results, settings, mode and channel analysis all come back with no quota cost. **Clear** removes the saved results.
+
 ## The outlier formula
 
 ```
