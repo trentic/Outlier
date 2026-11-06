@@ -82,6 +82,8 @@ code { background: var(--row-hover); padding: 1px 4px; border-radius: 4px; }
 .niche-block { margin-top: 12px; }
 .niche-block h3 { font-size: 12px; color: var(--muted); font-weight: 600; margin: 0 0 6px; }
 .via { font-size: 11px; color: var(--muted); }
+.watch-btn { border: 1px solid var(--border); background: transparent; color: var(--muted); border-radius: 5px; font: inherit; font-size: 11px; padding: 0 6px; margin-left: 6px; cursor: pointer; }
+.watch-btn.on { color: var(--good); border-color: var(--good); }
 .checks { list-style: none; padding: 0; margin: 10px 0 0; }
 .checks li { padding: 5px 0; border-bottom: 1px solid var(--border); display: flex; gap: 10px; }
 .checks .mark { font-weight: 700; width: 16px; flex: none; }
@@ -120,6 +122,7 @@ code { background: var(--row-hover); padding: 1px 4px; border-radius: 4px; }
         <button type="button" data-mode="keyword" class="on">Keyword</button>
         <button type="button" data-mode="hashtag">Hashtag</button>
         <button type="button" data-mode="niche">My niche</button>
+        <button type="button" data-mode="watch">Watchlist</button>
       </div>
       <label class="grow" id="qWrap"><span id="qLabel">Search terms</span>
         <input id="q" type="text" placeholder="e.g. home workout">
@@ -129,6 +132,21 @@ code { background: var(--row-hover); padding: 1px 4px; border-radius: 4px; }
       </label>
       <button class="ghost" id="analyze" type="button" style="display:none">Analyze channel</button>
       <label class="inline" id="strictWrap" style="display:none"><input id="strict" type="checkbox" checked> Only videos that actually use the hashtag</label>
+    </div>
+
+    <div id="watchPanel" style="display:none; margin-bottom:14px">
+      <div class="row">
+        <label class="grow">Add channels (@handles or channel links, separated by commas)
+          <input id="watchAdd" type="text" placeholder="@channel1, @channel2">
+        </label>
+        <button class="ghost" id="watchAddBtn" type="button">Add</button>
+      </div>
+      <div class="hint">A watchlist scan reads each channel's last 50 uploads directly. That's about <b>2 units per channel</b>, compared with 100 per search, and it catches every outlier on those channels, including ones search misses. To build the list quickly, click <b>+ Watch</b> next to any channel in your results, or <b>Watch all channels</b> above them.</div>
+      <div class="niche-block">
+        <h3 id="watchCount"></h3>
+        <div class="chips" id="watchChips"></div>
+      </div>
+      <button class="ghost" id="watchClear" type="button" style="margin-top:10px; display:none">Remove all</button>
     </div>
 
     <div id="nichePanel" style="display:none; margin-bottom:14px">
@@ -218,10 +236,11 @@ code { background: var(--row-hover); padding: 1px 4px; border-radius: 4px; }
           <input id="baselineN" type="number" min="5" max="50" value="30">
         </label>
         <label>Region code (optional) <input id="region" type="text" maxlength="2" placeholder="US"></label>
+        <label class="inline" style="align-self:end"><input id="useCache" type="checkbox" checked> Reuse identical searches from the last 6 hours (free)</label>
       </div>
     </details>
 
-    <div class="row" style="margin-top:14px">
+    <div class="row" style="margin-top:14px" id="deepRow">
       <label class="inline"><input id="deep" type="checkbox"> Deep scan: finds outliers a normal search misses, but costs more</label>
       <label id="deepWinWrap" style="display:none">Time windows
         <select id="deepWindows"><option>3</option><option selected>5</option><option>8</option></select>
@@ -244,6 +263,7 @@ code { background: var(--row-hover); padding: 1px 4px; border-radius: 4px; }
     <div class="toolbar">
       <span class="status" id="summary"></span>
       <span class="row">
+        <button class="ghost" id="watchAll" style="display:none"></button>
         <button class="ghost" id="scoreMore" style="display:none"></button>
         <button class="ghost" id="csv">Export CSV</button>
         <button class="ghost" id="clearResults">Clear</button>
@@ -542,6 +562,10 @@ code { background: var(--row-hover); padding: 1px 4px; border-radius: 4px; }
 
   // Which searches to run and what to call them.
   function buildQueries() {
+    if (mode === 'watch') {
+      if (!watchlist.length) return { error: 'Add some channels to your watchlist first.' };
+      return { watch: true, label: `your watchlist (${watchlist.length} channel${watchlist.length === 1 ? '' : 's'})` };
+    }
     if (mode === 'niche') {
       if (!niche) return { error: 'Analyze your channel first.' };
       const queries = niche.topics.concat(niche.hashtags).filter((t) => t.on).map(toQuery);
@@ -563,26 +587,78 @@ code { background: var(--row-hover); padding: 1px 4px; border-radius: 4px; }
     return { queries, label: main.q, excludeChannelId: null };
   }
 
+  // Search dates are snapped to 6-hour steps so that repeating a search gives identical requests, which the
+  // search cache can then answer for free. Videos outside the exact range are still removed by the filters.
+  const SIX_H = 6 * 3600 * 1000;
+  const SEARCH_TTL = SIX_H;
+  const floor6h = (t) => Math.floor(t / SIX_H) * SIX_H;
+
   // Deep scan windows: equal slices of the chosen date range, or widening slices back from today for "Any time".
+  // A window that runs up to "now" is left open-ended.
   function makeWindows(after, before, count) {
-    const end = before ?? Date.now();
+    const end = before ?? Math.ceil(Date.now() / SIX_H) * SIX_H;
+    let wins;
     if (after) {
-      const step = (end - after) / count;
-      return Array.from({ length: count }, (_, i) => [after + i * step, after + (i + 1) * step]);
+      const step = Math.round((end - after) / count);
+      wins = Array.from({ length: count }, (_, i) => [after + i * step, i === count - 1 ? end : after + (i + 1) * step]);
+    } else {
+      const days = [0];
+      for (let i = 0; i < count - 1; i++) days.push(Math.round(7 * Math.pow(1825 / 7, i / Math.max(count - 2, 1))));
+      const edges = days.map((d) => end - d * 86400000);
+      wins = [];
+      for (let i = 0; i < edges.length - 1; i++) wins.push([edges[i + 1], edges[i]]);
+      wins.push([null, edges[edges.length - 1]]);
     }
-    const days = [0];
-    for (let i = 0; i < count - 1; i++) days.push(Math.round(7 * Math.pow(1825 / 7, i / Math.max(count - 2, 1))));
-    const edges = days.map((d) => end - d * 86400000);
-    const wins = [];
-    for (let i = 0; i < edges.length - 1; i++) wins.push([edges[i + 1], edges[i]]);
-    wins.push([null, edges[edges.length - 1]]);
+    if (before == null) wins = wins.map(([a, b]) => [a, b === end ? null : b]);
     return wins;
+  }
+
+  function searchParams(job, f, pageToken) {
+    return {
+      part: 'id', type: 'video', q: job.q, maxResults: 50, order: job.order,
+      publishedAfter: job.after ? new Date(job.after).toISOString() : undefined,
+      publishedBefore: job.before ? new Date(job.before).toISOString() : undefined,
+      videoDuration: f.format === 'short' ? 'short' : undefined,
+      regionCode: $('region').value.trim().toUpperCase() || undefined,
+      relevanceLanguage: f.language || undefined,
+      pageToken,
+    };
+  }
+  function searchCacheKey(params) {
+    const str = JSON.stringify(params);
+    let h = 5381;
+    for (let i = 0; i < str.length; i++) h = ((h * 33) ^ str.charCodeAt(i)) >>> 0;
+    return 'ob:sc:' + h.toString(36) + '.' + str.length;
+  }
+  function cachedSearchHit(params) {
+    if (!$('useCache').checked) return null;
+    const c = store.get(searchCacheKey(params));
+    return c && Date.now() - c.t < SEARCH_TTL ? c.d : null;
+  }
+  async function searchCached(params) {
+    const hit = cachedSearchHit(params);
+    if (hit) return { ...hit, cached: true };
+    const data = await yt('search', params, 100);
+    const d = { items: (data.items || []).filter((it) => it.id?.videoId).map((it) => ({ id: { videoId: it.id.videoId } })), nextPageToken: data.nextPageToken };
+    store.set(searchCacheKey(params), { t: Date.now(), d });
+    return d;
+  }
+  function pruneSearchCache() {
+    try {
+      for (let i = localStorage.length - 1; i >= 0; i--) {
+        const k = localStorage.key(i);
+        if (!k || !k.startsWith('ob:sc:')) continue;
+        const c = store.get(k);
+        if (!c || Date.now() - c.t > SEARCH_TTL) localStorage.removeItem(k);
+      }
+    } catch {}
   }
 
   // Turn queries into individual search.list calls.
   function planJobs(queries, f) {
     const deep = $('deep').checked;
     const jobs = [];
+    f = { ...f, after: f.after ? floor6h(f.after) : f.after };
     for (const query of queries) {
       const texts = [query.q];
       if (deep && query.tag) texts.push(query.tag);
@@ -604,8 +680,17 @@ code { background: var(--row-hover); padding: 1px 4px; border-radius: 4px; }
   function updateCost() {
     const plan = buildQueries();
     if (plan.error) { $('cost').textContent = ''; return; }
-    const pages = planJobs(plan.queries, readFilters()).reduce((s, j) => s + j.pages, 0);
-    $('cost').textContent = `· Next search: up to ~${(pages * 100).toLocaleString()} units, plus about 2 per new channel.`;
+    if (plan.watch) {
+      const c = watchlist.length;
+      $('cost').textContent = `· Next scan: about ${(2 * c + Math.ceil(c / 50)).toLocaleString()} units (2 per channel).`;
+      return;
+    }
+    const f = readFilters();
+    let pages = 0, free = 0;
+    for (const j of planJobs(plan.queries, f)) {
+      if (cachedSearchHit(searchParams(j, f, undefined))) free += j.pages; else pages += j.pages;
+    }
+    $('cost').textContent = `· Next search: up to ~${(pages * 100).toLocaleString()} units${free ? ` (${free} search${free === 1 ? '' : 'es'} reused for free)` : ''}, plus about 2 per new channel.`;
   }
 
   function setStatus(t) { $('status').textContent = t; }
@@ -622,29 +707,28 @@ code { background: var(--row-hover); padding: 1px 4px; border-radius: 4px; }
     const { queries, label, excludeChannelId } = plan;
 
     const f = readFilters();
-    const jobs = planJobs(queries, f);
+    const jobs = plan.watch ? [] : planJobs(queries, f);
     const n = Math.max(5, Math.min(50, Number($('baselineN').value) || 30));
     const btn = $('go');
     btn.disabled = true;
     const startQuota = getQuota();
 
     try {
+      if (plan.watch) {
+        await scanWatchlist(n);
+        setStatus(`Done. This scan used about ${(getQuota() - startQuota).toLocaleString()} quota units.`);
+        return;
+      }
       // 1. search
+      let reused = 0;
       const via = new Map(); // videoId -> [query, ...]
       for (const [ji, job] of jobs.entries()) {
         const query = job.query;
         let token;
         for (let p = 0; p < job.pages; p++) {
           setStatus(`Searching “${job.q}” (search ${ji + 1}/${jobs.length}${job.pages > 1 ? `, page ${p + 1}/${job.pages}` : ''})…`);
-          const data = await yt('search', {
-            part: 'id', type: 'video', q: job.q, maxResults: 50, order: job.order,
-            publishedAfter: job.after ? new Date(job.after).toISOString() : undefined,
-            publishedBefore: job.before ? new Date(job.before).toISOString() : undefined,
-            videoDuration: f.format === 'short' ? 'short' : undefined,
-            regionCode: $('region').value.trim().toUpperCase() || undefined,
-            relevanceLanguage: f.language || undefined,
-            pageToken: token,
-          }, 100);
+          const data = await searchCached(searchParams(job, f, token));
+          if (data.cached) reused++;
           for (const it of data.items || []) {
             const id = it.id?.videoId;
             if (!id) continue;
@@ -685,12 +769,13 @@ code { background: var(--row-hover); padding: 1px 4px; border-radius: 4px; }
       for (const [id, c] of channels) newScan.channels[id] = c;
       for (const [id, b] of baselines) newScan.baselines[id] = b;
       setScan(newScan);
-      setStatus(`Done. This search used about ${(getQuota() - startQuota).toLocaleString()} quota units.`);
+      setStatus(`Done. This search used about ${(getQuota() - startQuota).toLocaleString()} quota units${reused ? `; ${reused} search${reused === 1 ? ' was' : 'es were'} reused for free` : ''}.`);
     } catch (e) {
       showError(e.message || String(e));
       setStatus('Stopped.');
     } finally {
       btn.disabled = false;
+      updateCost();
     }
   }
 
@@ -713,7 +798,13 @@ code { background: var(--row-hover); padding: 1px 4px; border-radius: 4px; }
     try { localStorage.setItem('ob:scan', JSON.stringify(data)); }
     catch {
       // Browser storage is full: save without descriptions rather than not at all.
-      try { localStorage.setItem('ob:scan', JSON.stringify({ ...data, videos: data.videos.map((v) => ({ ...v, description: (v.description.match(/#[\p{L}\p{N}_]+/gu) || []).join(' ') })) })); } catch {}
+      const bare = data.videos.map((v) => ({ ...v, tags: [], description: (v.description.match(/#[\p{L}\p{N}_]+/gu) || []).join(' ') }));
+      try { localStorage.setItem('ob:scan', JSON.stringify({ ...data, videos: bare })); }
+      catch {
+        // Still too big (a very large watchlist): keep only the videos that pass the current filters.
+        const keep = new Set(rows.map((r) => r.id));
+        try { localStorage.setItem('ob:scan', JSON.stringify({ ...data, videos: bare.filter((v) => keep.has(v.id)) })); } catch {}
+      }
     }
   }
 
@@ -804,6 +895,9 @@ code { background: var(--row-hover); padding: 1px 4px; border-radius: 4px; }
     const list = visibleRows();
     const unscoredCh = new Set(rows.filter((r) => r.unscored).map((r) => r.channelId)).size;
     $('scoreMore').style.display = $('unscoredWrap').style.display = unscoredCh ? '' : 'none';
+    const unwatched = new Set(list.map((r) => r.channelId).filter((id) => !isWatched(id))).size;
+    $('watchAll').style.display = unwatched ? '' : 'none';
+    $('watchAll').textContent = `Watch all ${unwatched} channel${unwatched === 1 ? '' : 's'}`;
     $('scoreMore').textContent = `Score ${unscoredCh} more channel${unscoredCh === 1 ? '' : 's'} (~${unscoredCh * 2} units)`;
     document.querySelectorAll('th[data-sort]').forEach((th) => {
       th.classList.toggle('active', th.dataset.sort === sortKey);
@@ -823,7 +917,7 @@ code { background: var(--row-hover); padding: 1px 4px; border-radius: 4px; }
         <td class="title">
           <a href="https://www.youtube.com/${r.short ? 'shorts/' : 'watch?v='}${esc(r.id)}" target="_blank" rel="noopener">${esc(r.title)}</a>
           <span class="badge">${r.short ? 'Short' : 'Long'} · ${fmtDuration(r.seconds)}</span>
-          <div class="ch"><a href="https://www.youtube.com/channel/${esc(r.channelId)}" target="_blank" rel="noopener">${esc(r.channelTitle)}</a></div>
+          <div class="ch"><a href="https://www.youtube.com/channel/${esc(r.channelId)}" target="_blank" rel="noopener">${esc(r.channelTitle)}</a><button type="button" class="watch-btn${isWatched(r.channelId) ? ' on' : ''}" data-watch="${esc(r.channelId)}">${isWatched(r.channelId) ? '✓ Watching' : '+ Watch'}</button></div>
           ${r.unscored ? '<div class="via">Not scored yet: use “Score more channels” above</div>' : ''}
           ${m.multi ? `<div class="via">found via ${r.via.map((x) => esc(x.label)).join(', ')}</div>` : ''}
         </td>
@@ -1082,6 +1176,10 @@ code { background: var(--row-hover); padding: 1px 4px; border-radius: 4px; }
         verdict = `<div class="verdict warn">It passes all your current filters. Run a search, then check again to see whether YouTube returns it.</div>`;
       } else if (found) {
         verdict = `<div class="verdict good">It was in your last search and passes every filter, so it should be in the results. Try sorting by Views.</div>`;
+      } else if (scan?.watch) {
+        verdict = isWatched(v.channelId)
+          ? `<div class="verdict warn">It passes every filter, but it isn’t among this channel’s latest 50 uploads.</div>`
+          : `<div class="verdict warn">It passes every filter, but its channel isn’t on your watchlist. Add it, then scan again.</div>`;
       } else {
         verdict = `<div class="verdict warn">It passes every filter, but YouTube’s search didn’t return it for “${esc(lastSearch.label)}”. Turn on Deep scan, add more time windows, or add extra search terms that match its title.</div>`;
       }
@@ -1105,25 +1203,127 @@ code { background: var(--row-hover); padding: 1px 4px; border-radius: 4px; }
     }
   }
 
+  // ---------- Watchlist ----------
+  let watchlist = store.get('ob:watch') || []; // [{ id, title, subs }]
+  const isWatched = (id) => watchlist.some((c) => c.id === id);
+  function saveWatch() {
+    store.set('ob:watch', watchlist);
+    renderWatch();
+    if (scan) render();
+    updateCost();
+  }
+  function addToWatch(chs) {
+    for (const c of chs) if (c && !isWatched(c.id)) watchlist.push({ id: c.id, title: c.title, subs: c.subs ?? null });
+    saveWatch();
+  }
+  function renderWatch() {
+    $('watchCount').textContent = watchlist.length
+      ? `${watchlist.length} channel${watchlist.length === 1 ? '' : 's'} watched (click one to remove it)`
+      : 'No channels yet.';
+    $('watchChips').innerHTML = watchlist.map((c) => `<button type="button" class="chip" data-unwatch="${esc(c.id)}" title="Remove from watchlist">${esc(c.title)}${c.subs != null ? `<small>${compact(c.subs)}</small>` : ''} ×</button>`).join('');
+    $('watchClear').style.display = watchlist.length ? '' : 'none';
+  }
+  async function addWatchFromInput() {
+    showError('');
+    apiKey = $('apiKey').value.trim();
+    if (!apiKey) return showError('Enter a YouTube Data API key first.');
+    const items = $('watchAdd').value.split(/[,\n]+/).map((s) => s.trim()).filter(Boolean);
+    if (!items.length) return;
+    $('watchAddBtn').disabled = true;
+    const failed = [];
+    try {
+      const ids = [];
+      for (const it of items) {
+        try { ids.push(await resolveChannelId(it)); } catch (e) { if (/quota/i.test(e.message)) throw e; failed.push(it); }
+      }
+      if (ids.length) addToWatch([...(await fetchChannels(ids)).values()]);
+      $('watchAdd').value = failed.join(', ');
+      if (failed.length) showError(`Couldn’t find: ${failed.join(', ')}`);
+      setStatus(`Added ${ids.length} channel${ids.length === 1 ? '' : 's'}.`);
+    } catch (e) {
+      showError(e.message || String(e));
+    } finally {
+      $('watchAddBtn').disabled = false;
+    }
+  }
+
+  // Read the latest 50 uploads of every watched channel and score them all. No search calls at all.
+  async function scanWatchlist(n) {
+    setStatus('Loading channels…');
+    const channels = await fetchChannels(watchlist.map((c) => c.id));
+    for (const c of watchlist) { const ch = channels.get(c.id); if (ch) { c.title = ch.title; c.subs = ch.subs; } }
+    store.set('ob:watch', watchlist);
+    renderWatch();
+    const vidIds = [];
+    let done = 0;
+    await runPool([...channels.values()], 6, async (ch) => {
+      if (ch.uploads) {
+        try {
+          const pl = await yt('playlistItems', { part: 'contentDetails', playlistId: ch.uploads, maxResults: 50 }, 1);
+          for (const it of pl.items || []) if (it.contentDetails?.videoId) vidIds.push(it.contentDetails.videoId);
+        } catch (e) { if (/quota/i.test(e.message)) throw e; }
+      }
+      setStatus(`Reading uploads… ${++done}/${channels.size} channels`);
+    });
+    setStatus(`Loading stats for ${vidIds.length} videos…`);
+    const videos = (await fetchVideos(vidIds)).filter((v) => !v.live && v.views != null);
+    const baselines = {};
+    for (const v of videos) {
+      v.via = [];
+      (baselines[v.channelId] ||= []).push({ id: v.id, v: v.views, s: v.short ? 1 : 0, t: v.publishedAt });
+    }
+    // Reuse these uploads as cached baselines, so later searches that hit the same channels cost less.
+    for (const [cid, items] of Object.entries(baselines)) {
+      store.set(`ob:base:${cid}:${n}`, { t: Date.now(), items: [...items].sort((a, b) => b.t - a.t).slice(0, n) });
+    }
+    const chObj = {};
+    for (const [id, c] of channels) chObj[id] = c;
+    setScan({ label: `your watchlist (${watchlist.length} channel${watchlist.length === 1 ? '' : 's'})`, watch: true, multi: false,
+      excludeChannelId: null, savedAt: Date.now(), videos, channels: chObj, baselines });
+  }
+
   // ---------- wiring ----------
   function setMode(m) {
     mode = m;
     document.querySelectorAll('#mode button').forEach((x) => x.classList.toggle('on', x.dataset.mode === m));
     $('qLabel').textContent = mode === 'hashtag' ? 'Hashtag' : 'Search terms';
     $('q').placeholder = mode === 'hashtag' ? 'e.g. #fitness' : 'e.g. home workout';
-    $('qWrap').style.display = mode === 'niche' ? 'none' : '';
+    $('qWrap').style.display = mode === 'niche' || mode === 'watch' ? 'none' : '';
     $('chWrap').style.display = $('analyze').style.display = $('nichePanel').style.display = mode === 'niche' ? '' : 'none';
-    $('strictWrap').style.display = mode === 'keyword' ? 'none' : '';
+    $('watchPanel').style.display = mode === 'watch' ? '' : 'none';
+    $('deepRow').style.display = mode === 'watch' ? 'none' : '';
+    $('strictWrap').style.display = mode === 'keyword' || mode === 'watch' ? 'none' : '';
+    $('go').textContent = mode === 'watch' ? 'Scan watchlist' : 'Find outliers';
     store.set('ob:mode', m);
     syncDeep();
   }
   function syncDeep() {
     const on = $('deep').checked;
-    $('deepWinWrap').style.display = $('deepHint').style.display = on ? '' : 'none';
+    $('deepWinWrap').style.display = $('deepHint').style.display = on && mode !== 'watch' ? '' : 'none';
     $('deepExtraWrap').style.display = on && mode !== 'niche' ? '' : 'none';
     updateCost();
   }
   $('deep').addEventListener('change', syncDeep);
+  $('watchAddBtn').addEventListener('click', addWatchFromInput);
+  $('watchAdd').addEventListener('keydown', (e) => { if (e.key === 'Enter') addWatchFromInput(); });
+  $('watchChips').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-unwatch]');
+    if (!b) return;
+    watchlist = watchlist.filter((c) => c.id !== b.dataset.unwatch);
+    saveWatch();
+  });
+  $('watchClear').addEventListener('click', () => { if (confirm(`Remove all ${watchlist.length} channels from your watchlist?`)) { watchlist = []; saveWatch(); } });
+  $('tbody').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-watch]');
+    if (!b || !scan) return;
+    const id = b.dataset.watch;
+    if (isWatched(id)) { watchlist = watchlist.filter((c) => c.id !== id); saveWatch(); }
+    else addToWatch([scan.channels[id]]);
+  });
+  $('watchAll').addEventListener('click', () => {
+    if (!scan) return;
+    addToWatch([...new Set(visibleRows().map((r) => r.channelId))].map((id) => scan.channels[id]));
+  });
   // Keep the cost estimate current as settings change.
   document.querySelector('main').addEventListener('input', updateCost);
   document.querySelector('main').addEventListener('change', updateCost);
@@ -1181,7 +1381,7 @@ code { background: var(--row-hover); padding: 1px 4px; border-radius: 4px; }
 
   // Remember every search setting across refreshes.
   const SAVED_SETTINGS = ['q', 'format', 'minViews', 'minSubs', 'maxSubs', 'minScore', 'dateRange', 'dateFrom', 'dateTo', 'language', 'strict',
-    'order', 'pages', 'nichePages', 'baselineN', 'region', 'deep', 'deepWindows', 'deepExtra', 'showUnscored'];
+    'order', 'pages', 'nichePages', 'baselineN', 'region', 'deep', 'deepWindows', 'deepExtra', 'showUnscored', 'useCache'];
   function saveSettings() {
     const out = {};
     for (const id of SAVED_SETTINGS) { const el = $(id); out[id] = el.type === 'checkbox' ? el.checked : el.value; }
@@ -1206,6 +1406,8 @@ code { background: var(--row-hover); padding: 1px 4px; border-radius: 4px; }
   if (savedKey) { $('apiKey').value = savedKey; $('saveKey').checked = true; }
   const savedCh = store.get('ob:channelInput');
   if (savedCh) $('channelInput').value = savedCh;
+  pruneSearchCache();
+  renderWatch();
   loadSettings();
   const savedNiche = store.get('ob:niche');
   if (savedNiche?.profile) { niche = savedNiche; showNicheProfile(); }

@@ -7,7 +7,7 @@ A single-file web tool (`index.html`) that searches YouTube for **outlier videos
 1. Get a free API key: Google Cloud Console → APIs & Services → enable **YouTube Data API v3** → Credentials → Create API key.
    (Optional but recommended: restrict the key to the YouTube Data API v3 only.)
 2. Open `index.html` in a browser (double-click it, or host it on GitHub Pages).
-3. Paste your key, choose **Keyword**, **Hashtag** or **My niche** mode, set your filters and click **Find outliers**.
+3. Paste your key, choose **Keyword**, **Hashtag**, **My niche** or **Watchlist** mode, set your filters and click **Find outliers**.
 
 Live version: https://trentic.github.io/Outlier/
 
@@ -50,6 +50,21 @@ Enter your channel (`@handle`, channel URL, channel ID, or a link to one of your
 - the **hashtags** you use, leaving out generic ones like `#shorts` and `#viral`
 
 The top 4 topics start selected. Click chips to turn them on or off, or add your own. Each selected topic is a separate search, about 100 units per page. **Match my channel** sets the format to your main format and the subscriber range to your sub count ÷10 to ×10, so you see outliers from channels near your size. Your own videos are left out of the results, and each result shows which topic found it.
+
+## Watchlist mode (the cheap way)
+
+Searches are what use up quota: each one costs 100 units. A watchlist skips search entirely. It reads each saved channel's last 50 uploads directly, for **about 2 units per channel**, and scores all of them. That means it also finds every outlier on those channels, including ones YouTube's search never returns.
+
+- **Build it as you go:** click **+ Watch** next to any channel in your results, or **Watch all N channels** to add every channel in the current results.
+- **Or add channels by hand:** type `@handles` or channel links, separated by commas.
+- **Scan:** switch to **Watchlist** and click **Scan watchlist**. 100 channels cost about 200 units, the same as two searches.
+- Scans also save each channel's baseline, so later searches that turn up the same channels cost less.
+
+A good routine: do a few searches or deep scans to find the channels in your niche, watch them, then scan the watchlist each day instead of searching again.
+
+## Free repeat searches
+
+Identical searches (same terms, filters and settings) from the last 6 hours come from a local copy, at no cost. Search dates are snapped to 6-hour steps so that repeat searches match; the exact date filter is still applied to the results. You can turn this off under Advanced. The cost estimate shows which searches will be reused.
 
 ## Hashtag mode
 
